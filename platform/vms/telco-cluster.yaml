@@ -19,7 +19,7 @@
 # (KubeVirt 1.7 + k8s 1.36 bug, kubevirt#17858).
 #
 # Each VM's cloud-init lives in its own Secret (<vm>-cloudinit, key: userdata) and is
-# referenced with userDataSecretRef: KubeVirt rejects inline cloudInitNoCloud.userData
+# referenced with secretRef: KubeVirt rejects inline cloudInitNoCloud.userData
 # above 2048 bytes, and the telco-cp bootstrap is larger than that.
 ---
 apiVersion: v1
@@ -253,7 +253,7 @@ spec:
           name: telco-cp-root
       - name: cloudinitdisk
         cloudInitNoCloud:
-          userDataSecretRef:
+          secretRef:
             name: telco-cp-cloudinit
 ---
 apiVersion: kubevirt.io/v1
@@ -314,7 +314,7 @@ spec:
           name: telco-core-root
       - name: cloudinitdisk
         cloudInitNoCloud:
-          userDataSecretRef:
+          secretRef:
             name: telco-core-cloudinit
 ---
 apiVersion: kubevirt.io/v1
@@ -375,5 +375,5 @@ spec:
           name: telco-edge-root
       - name: cloudinitdisk
         cloudInitNoCloud:
-          userDataSecretRef:
+          secretRef:
             name: telco-edge-cloudinit
