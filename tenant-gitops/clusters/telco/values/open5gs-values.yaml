@@ -5,10 +5,12 @@ pcrf: {enabled: false}
 sgwc: {enabled: false}
 sgwu: {enabled: false}
 smf:
+  nodeSelector: {telco.example/site: core}
   config:
     pcrf: {enabled: false}
 
 amf:
+  nodeSelector: {telco.example/site: core}
   config:
     guamiList:
       - plmn_id: {mcc: "999", mnc: "70"}
@@ -22,6 +24,7 @@ amf:
           - {sst: 1, sd: "0x111111"}
 
 nssf:
+  nodeSelector: {telco.example/site: core}
   config:
     nsiList:
       - {uri: "", sst: 1, sd: "0x111111"}
@@ -30,6 +33,7 @@ nssf:
 # postRenderer in open5gs-hr.yaml.
 webui:
   enabled: true
+  nodeSelector: {telco.example/site: core}
   ingress:
     enabled: false
 
@@ -41,7 +45,24 @@ populate:
 
 # bitnami/mongodb tags were retired; bitnamilegacy still serves this one.
 mongodb:
+  nodeSelector: {telco.example/site: core}
   image:
     registry: docker.io
     repository: bitnamilegacy/mongodb
     tag: 5.0.10-debian-11-r3
+
+# Placement: control-plane NFs and the database at the core site, the user plane at the edge.
+ausf:
+  nodeSelector: {telco.example/site: core}
+nrf:
+  nodeSelector: {telco.example/site: core}
+pcf:
+  nodeSelector: {telco.example/site: core}
+scp:
+  nodeSelector: {telco.example/site: core}
+udm:
+  nodeSelector: {telco.example/site: core}
+udr:
+  nodeSelector: {telco.example/site: core}
+upf:
+  nodeSelector: {telco.example/site: edge}

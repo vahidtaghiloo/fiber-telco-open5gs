@@ -6,7 +6,11 @@ mnc: '70'
 sst: 1
 sd: "0x111111"
 tac: '0001'
+
+# RAN simulator lives at the edge site, next to the UPF.
+nodeSelector: {telco.example/site: edge}
 ues:
   enabled: true
   count: 2
   initialMSISDN: '0000000001'
+  nodeSelector: {telco.example/site: edge}

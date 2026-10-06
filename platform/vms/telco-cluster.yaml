@@ -1,10 +1,19 @@
-# The telco's own Kubernetes cluster: two KubeVirt VMs running k3s.
+# The telco's own Kubernetes cluster: THREE KubeVirt VMs running k3s, one per role.
 # The fiber company rents compute + network; everything inside the VMs
 # (k3s, Flux, Open5GS) belongs to the telco.
 #
-# After k3s is up, the control-plane VM installs Flux and points it at the
-# telco's Git repo (the tenant-gitops/ directory) -- so the telco deploys
-# with 'git push' and never touches the fiber company's platform.
+#   telco-cp     k3s server, tainted CriticalAddonsOnly: control plane only
+#   telco-core   agent, label telco.example/site=core: control-plane NFs, MongoDB, WebUI
+#   telco-edge   agent, label telco.example/site=edge: UPF (user plane), UERANSIM gNB + UEs
+#
+# Every VM has eth0 (fiber company pod network, used to reach the cp API and the
+# internet) and net1 (the rented VLAN 300 slice). k3s is started with --node-ip set to
+# the net1 address, so the telco cluster's inter-node traffic (flannel VXLAN: N2 gNB->AMF,
+# N3/N4 UPF) rides the rented slice. If a VM gets no net1 address within ~2 min the
+# bootstrap logs it and falls back to eth0 (see /var/log/telco-bootstrap.log).
+#
+# After k3s is up, the cp VM installs Flux pointing at the telco's Git repo
+# (tenant-gitops/), so the telco deploys with 'git push'.
 #
 # The Ubuntu image is imported with CDI DataVolumes, not containerDisk
 # (KubeVirt 1.7 + k8s 1.36 bug, kubevirt#17858).
@@ -34,7 +43,7 @@ spec:
       labels: {kubevirt.io/domain: telco-cp, fiber.example/tenant: telco}
     spec:
       domain:
-        cpu: {cores: 4}
+        cpu: {cores: 2}
         devices:
           disks:
             - {name: rootdisk, disk: {bus: virtio}}
@@ -42,7 +51,7 @@ spec:
           interfaces:
             - {name: default, masquerade: {}}
             - {name: dataplane, bridge: {}}
-        resources: {requests: {memory: 8Gi}}
+        resources: {requests: {memory: 4Gi}}
       networks:
         - {name: default, pod: {}}
         - {name: dataplane, multus: {networkName: telco-dp}}
@@ -86,8 +95,20 @@ spec:
                     apt-get install -y linux-modules-extra-$(uname -r) || true
                     modprobe sctp || true
                     echo sctp > /etc/modules-load.d/sctp.conf
-                    curl -sfL https://get.k3s.io | K3S_TOKEN=fiber-telco-demo-token sh -s - server \
+                    # net1 = the interface that is not the default-route one (eth0/masquerade)
+                    NET1IP=""
+                    for i in $(seq 1 24); do
+                      DEF=$(ip -4 route show default | awk '{print $5; exit}')
+                      NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
+                      [ -n "$NET1IP" ] && break
+                      sleep 5
+                    done
+                    NODEIP=""
+                    [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
+                    echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
+                    curl -sfL https://get.k3s.io | K3S_TOKEN=fiber-telco-demo-token sh -s - server $NODEIP \
                       --tls-san telco-cp-api.telco.svc.cluster.local \
+                      --node-taint CriticalAddonsOnly=true:NoExecute \
                       --disable traefik --disable servicelb --disable metrics-server
                     export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
                     until k3s kubectl get nodes 2>/dev/null | grep -q ' Ready'; do sleep 5; done
@@ -101,19 +122,19 @@ spec:
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
-  name: telco-worker
+  name: telco-core
   namespace: telco
-  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-agent}
+  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-agent-core}
 spec:
   runStrategy: Always
   dataVolumeTemplates:
-    - metadata: {name: telco-worker-root}
+    - metadata: {name: telco-core-root}
       spec:
         storage: {resources: {requests: {storage: 30Gi}}}
         source: {registry: {url: "docker://quay.io/containerdisks/ubuntu:22.04"}}
   template:
     metadata:
-      labels: {kubevirt.io/domain: telco-worker, fiber.example/tenant: telco}
+      labels: {kubevirt.io/domain: telco-core, fiber.example/tenant: telco}
     spec:
       domain:
         cpu: {cores: 8}
@@ -124,12 +145,12 @@ spec:
           interfaces:
             - {name: default, masquerade: {}}
             - {name: dataplane, bridge: {}}
-        resources: {requests: {memory: 16Gi}}
+        resources: {requests: {memory: 12Gi}}
       networks:
         - {name: default, pod: {}}
         - {name: dataplane, multus: {networkName: telco-dp}}
       volumes:
-        - {name: rootdisk, dataVolume: {name: telco-worker-root}}
+        - {name: rootdisk, dataVolume: {name: telco-core-root}}
         - name: cloudinitdisk
           cloudInitNoCloud:
             userData: |
@@ -144,11 +165,92 @@ spec:
                     #!/bin/bash
                     exec >>/var/log/telco-bootstrap.log 2>&1
                     set -x
+                    # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
                     apt-get update
                     apt-get install -y linux-modules-extra-$(uname -r) || true
                     modprobe sctp || true
                     echo sctp > /etc/modules-load.d/sctp.conf
+                    # net1 = the interface that is not the default-route one (eth0/masquerade)
+                    NET1IP=""
+                    for i in $(seq 1 24); do
+                      DEF=$(ip -4 route show default | awk '{print $5; exit}')
+                      NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
+                      [ -n "$NET1IP" ] && break
+                      sleep 5
+                    done
+                    NODEIP=""
+                    [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
+                    echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
                     curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
-                      K3S_TOKEN=fiber-telco-demo-token sh -
+                      K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
+                      --node-label telco.example/site=core
+              runcmd:
+                - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: telco-edge
+  namespace: telco
+  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-agent-edge}
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+    - metadata: {name: telco-edge-root}
+      spec:
+        storage: {resources: {requests: {storage: 30Gi}}}
+        source: {registry: {url: "docker://quay.io/containerdisks/ubuntu:22.04"}}
+  template:
+    metadata:
+      labels: {kubevirt.io/domain: telco-edge, fiber.example/tenant: telco}
+    spec:
+      domain:
+        cpu: {cores: 4}
+        devices:
+          disks:
+            - {name: rootdisk, disk: {bus: virtio}}
+            - {name: cloudinitdisk, disk: {bus: virtio}}
+          interfaces:
+            - {name: default, masquerade: {}}
+            - {name: dataplane, bridge: {}}
+        resources: {requests: {memory: 8Gi}}
+      networks:
+        - {name: default, pod: {}}
+        - {name: dataplane, multus: {networkName: telco-dp}}
+      volumes:
+        - {name: rootdisk, dataVolume: {name: telco-edge-root}}
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              password: sylva-demo
+              chpasswd: {expire: false}
+              ssh_pwauth: true
+              write_files:
+                - path: /root/bootstrap.sh
+                  permissions: "0755"
+                  content: |
+                    #!/bin/bash
+                    exec >>/var/log/telco-bootstrap.log 2>&1
+                    set -x
+                    # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
+                    apt-get update
+                    apt-get install -y linux-modules-extra-$(uname -r) || true
+                    modprobe sctp || true
+                    echo sctp > /etc/modules-load.d/sctp.conf
+                    # net1 = the interface that is not the default-route one (eth0/masquerade)
+                    NET1IP=""
+                    for i in $(seq 1 24); do
+                      DEF=$(ip -4 route show default | awk '{print $5; exit}')
+                      NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
+                      [ -n "$NET1IP" ] && break
+                      sleep 5
+                    done
+                    NODEIP=""
+                    [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
+                    echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
+                    curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
+                      K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
+                      --node-label telco.example/site=edge
               runcmd:
                 - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]

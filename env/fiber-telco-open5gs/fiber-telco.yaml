@@ -42,7 +42,7 @@ units:
   #    in the telco cluster, which then deploys Open5GS from the same repo
   telco-cluster-vms:
     info:
-      description: telco-owned Kubernetes cluster on two KubeVirt VMs (k3s + Flux)
+      description: telco-owned Kubernetes cluster on three KubeVirt VMs (k3s + Flux)
     enabled: true
     annotations:
       sylvactl/unitTimeout: 1800s
