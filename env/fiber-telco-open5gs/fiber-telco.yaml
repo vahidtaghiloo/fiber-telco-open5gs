@@ -38,7 +38,7 @@ units:
       wait: true
       timeout: 5m
 
-  # 2. the telco's two VMs (k3s server + agent); cloud-init also installs Flux
+  # 2. the telco's three VMs (k3s server, core agent, edge agent); cloud-init also installs Flux
   #    in the telco cluster, which then deploys Open5GS from the same repo
   telco-cluster-vms:
     info:
