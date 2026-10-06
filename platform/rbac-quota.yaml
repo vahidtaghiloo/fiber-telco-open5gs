@@ -32,4 +32,4 @@ spec:
   hard:
     requests.cpu: "16"
     requests.memory: 32Gi
-    requests.storage: 100Gi
+    requests.storage: 300Gi

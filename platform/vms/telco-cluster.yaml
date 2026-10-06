@@ -212,7 +212,7 @@ spec:
       storage:
         resources:
           requests:
-            storage: 30Gi
+            storage: 20Gi
       source:
         registry:
           url: docker://quay.io/containerdisks/ubuntu:22.04
@@ -334,7 +334,7 @@ spec:
       storage:
         resources:
           requests:
-            storage: 30Gi
+            storage: 20Gi
       source:
         registry:
           url: docker://quay.io/containerdisks/ubuntu:22.04
