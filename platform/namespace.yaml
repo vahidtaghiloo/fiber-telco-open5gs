@@ -1,0 +1,11 @@
+# The telco's rented slice of the fiber company's workload cluster.
+# virt-launcher needs the 'privileged' PodSecurity level (Sylva runs RKE2 with the CIS profile).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: telco
+  labels:
+    fiber.example/tenant: telco
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged

@@ -1,0 +1,154 @@
+# The telco's own Kubernetes cluster: two KubeVirt VMs running k3s.
+# The fiber company rents compute + network; everything inside the VMs
+# (k3s, Flux, Open5GS) belongs to the telco.
+#
+# After k3s is up, the control-plane VM installs Flux and points it at the
+# telco's Git repo (the tenant-gitops/ directory) -- so the telco deploys
+# with 'git push' and never touches the fiber company's platform.
+#
+# The Ubuntu image is imported with CDI DataVolumes, not containerDisk
+# (KubeVirt 1.7 + k8s 1.36 bug, kubevirt#17858).
+apiVersion: v1
+kind: Service
+metadata: {name: telco-cp-api, namespace: telco}
+spec:
+  selector: {kubevirt.io/domain: telco-cp}
+  ports:
+    - {port: 6443, targetPort: 6443}
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: telco-cp
+  namespace: telco
+  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-server}
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+    - metadata: {name: telco-cp-root}
+      spec:
+        storage: {resources: {requests: {storage: 30Gi}}}
+        source: {registry: {url: "docker://quay.io/containerdisks/ubuntu:22.04"}}
+  template:
+    metadata:
+      labels: {kubevirt.io/domain: telco-cp, fiber.example/tenant: telco}
+    spec:
+      domain:
+        cpu: {cores: 4}
+        devices:
+          disks:
+            - {name: rootdisk, disk: {bus: virtio}}
+            - {name: cloudinitdisk, disk: {bus: virtio}}
+          interfaces:
+            - {name: default, masquerade: {}}
+            - {name: dataplane, bridge: {}}
+        resources: {requests: {memory: 8Gi}}
+      networks:
+        - {name: default, pod: {}}
+        - {name: dataplane, multus: {networkName: telco-dp}}
+      volumes:
+        - {name: rootdisk, dataVolume: {name: telco-cp-root}}
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              password: sylva-demo
+              chpasswd: {expire: false}
+              ssh_pwauth: true
+              write_files:
+                - path: /root/flux-sync.yaml
+                  content: |
+                    apiVersion: source.toolkit.fluxcd.io/v1
+                    kind: GitRepository
+                    metadata: {name: telco, namespace: flux-system}
+                    spec:
+                      interval: 1m
+                      # TODO: set to the URL you push this repo to
+                      url: https://github.com/CHANGE-ME/fiber-telco-open5gs.git
+                      ref: {branch: main}
+                    ---
+                    apiVersion: kustomize.toolkit.fluxcd.io/v1
+                    kind: Kustomization
+                    metadata: {name: telco-open5gs, namespace: flux-system}
+                    spec:
+                      interval: 5m
+                      prune: true
+                      sourceRef: {kind: GitRepository, name: telco}
+                      path: ./tenant-gitops/clusters/telco
+                - path: /root/bootstrap.sh
+                  permissions: "0755"
+                  content: |
+                    #!/bin/bash
+                    exec >>/var/log/telco-bootstrap.log 2>&1
+                    set -x
+                    # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
+                    apt-get update
+                    apt-get install -y linux-modules-extra-$(uname -r) || true
+                    modprobe sctp || true
+                    echo sctp > /etc/modules-load.d/sctp.conf
+                    curl -sfL https://get.k3s.io | K3S_TOKEN=fiber-telco-demo-token sh -s - server \
+                      --tls-san telco-cp-api.telco.svc.cluster.local \
+                      --disable traefik --disable servicelb --disable metrics-server
+                    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+                    until k3s kubectl get nodes 2>/dev/null | grep -q ' Ready'; do sleep 5; done
+                    k3s kubectl apply -f https://github.com/fluxcd/flux2/releases/download/v2.8.8/install.yaml
+                    until k3s kubectl get crd gitrepositories.source.toolkit.fluxcd.io 2>/dev/null; do sleep 5; done
+                    sleep 15
+                    k3s kubectl apply -f /root/flux-sync.yaml
+              runcmd:
+                - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: telco-worker
+  namespace: telco
+  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-agent}
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+    - metadata: {name: telco-worker-root}
+      spec:
+        storage: {resources: {requests: {storage: 30Gi}}}
+        source: {registry: {url: "docker://quay.io/containerdisks/ubuntu:22.04"}}
+  template:
+    metadata:
+      labels: {kubevirt.io/domain: telco-worker, fiber.example/tenant: telco}
+    spec:
+      domain:
+        cpu: {cores: 8}
+        devices:
+          disks:
+            - {name: rootdisk, disk: {bus: virtio}}
+            - {name: cloudinitdisk, disk: {bus: virtio}}
+          interfaces:
+            - {name: default, masquerade: {}}
+            - {name: dataplane, bridge: {}}
+        resources: {requests: {memory: 16Gi}}
+      networks:
+        - {name: default, pod: {}}
+        - {name: dataplane, multus: {networkName: telco-dp}}
+      volumes:
+        - {name: rootdisk, dataVolume: {name: telco-worker-root}}
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              password: sylva-demo
+              chpasswd: {expire: false}
+              ssh_pwauth: true
+              write_files:
+                - path: /root/bootstrap.sh
+                  permissions: "0755"
+                  content: |
+                    #!/bin/bash
+                    exec >>/var/log/telco-bootstrap.log 2>&1
+                    set -x
+                    apt-get update
+                    apt-get install -y linux-modules-extra-$(uname -r) || true
+                    modprobe sctp || true
+                    echo sctp > /etc/modules-load.d/sctp.conf
+                    curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
+                      K3S_TOKEN=fiber-telco-demo-token sh -
+              runcmd:
+                - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]

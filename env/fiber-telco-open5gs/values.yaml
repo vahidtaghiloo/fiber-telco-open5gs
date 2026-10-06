@@ -1,0 +1,95 @@
+---
+# Copied from sylva-tenant-demo/values.yaml (same lab host and platform settings).
+env_type: dev
+
+## NOTE on the k8s 1.36 / KubeVirt containerDisk bug (kubevirt/kubevirt#17858):
+##
+## k8s 1.36 enabled strict numeric format validation for CRDs
+## (kubernetes/kubernetes#136582). KubeVirt declares
+## ContainerDiskInfo.Checksum as uint32 while its CRD publishes format:
+## int32, and virt-handler writes an empty value into it, so the API server
+## rejects every VMI status update:
+##
+##   Invalid value: "": Checked value must be of type integer with format
+##   int32 in status.volumeStatus[1].containerDiskVolume.checksum
+##
+## The guest boots and qemu runs fine, but the VMI sticks in phase Scheduled
+## forever and the VM never reports Ready. Sylva pins KubeVirt 1.7.0, which
+## predates the upstream fix.
+##
+## We do NOT pin k8s to 1.35 to dodge this: that would also require the
+## mgmt-cluster os-image-server to download a second 30Gi OS image (see
+## os_image_server_additional_selectors). Instead, tenant-b's VMs use CDI
+## DataVolumes rather than containerDisk -- containerDiskVolume.checksum is
+## only written for containerDisk volumes, so the bug simply does not apply.
+## See tenants/tenant-b/nested-cluster.yaml in the demo repo.
+
+cluster:
+  capi_providers:
+    bootstrap_provider: cabpr   # RKE2 (base-capm3-virt/base leaves this commented out)
+
+  # Single-node workload cluster — the CP node runs everything.
+  control_plane_replicas: 1
+  machine_deployments:
+    md0:
+      replicas: 0
+
+  capm3:
+    os_image_selector:
+      os: ubuntu
+
+    ## Site DNS override — restart-srv01 only, where the firewall blocks ALL
+    ## outbound port 53 (UDP+TCP) while 443 stays open. base-capm3-virt
+    ## hardcodes 1.1.1.1/8.8.8.8, so without this the node can never resolve
+    ## get.rke2.io, CABPR's `curl -sfL https://get.rke2.io | sh -` fails
+    ## silently, rke2-server never installs, and the deploy hangs at
+    ## cluster-reachable. It also matters for Tenant B: the nested k3s VMs
+    ## run `curl -sfL https://get.k3s.io` in cloud-init, resolving through
+    ## the cluster's CoreDNS, which forwards to these same resolvers.
+    ## On a host with working outbound 53 (e.g. a GCP VM) comment this out.
+    dns_servers:
+      - 130.192.3.21  # site resolvers (GARR/polito range)
+      - 130.192.3.24
+
+  rke2:
+    additionalUserData:
+      config:
+        #cloud-config
+        users:
+          - name: sylva-user
+            groups: users,sylva-ops
+            sudo: ALL=(ALL) NOPASSWD:ALL
+            shell: /bin/bash
+            lock_passwd: true  # SSH-key-only login, no password
+            ssh_authorized_keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOCHyGgB44WJFnzeLKVh0gS01lNtK/BMCe9DrX+5dO1l prognose@restart-srv01
+
+units:
+  longhorn:
+    helmrelease_spec:
+      values:
+        persistence:
+          defaultClassReplicaCount: 1  # single node: default of 3 replicas can never schedule
+
+  kubevirt:
+    enabled: true
+
+  # Multus: the meta-CNI that gives a pod/VM more than one interface.
+  # workload-cluster.values.yaml ships it as
+  # 'enabled: false  # can be enabled at runtime if desired', so this single
+  # line is the whole platform change needed. It brings in, automatically:
+  #   - the rke2-multus HelmRelease (kube-system), incl. rke2-whereabouts IPAM
+  #   - multus-init, a Kyverno policy that stops Calico from installing CNI
+  #     binaries concurrently with Multus
+  #   - multus-cleanup, a CronJob that prunes /var/lib/cni/multus
+  multus:
+    enabled: true
+
+  monitoring:
+    enabled: false
+
+monitoring:
+  thanos:
+    receive:
+      replicaCount: 1  # single-node cluster: hard pod anti-affinity on hostname
+                       # means only 1 of the default 3 replicas can ever schedule

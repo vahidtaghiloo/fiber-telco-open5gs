@@ -1,0 +1,30 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: open5gs
+  namespace: open5gs
+spec:
+  interval: 10m
+  timeout: 30m
+  releaseName: open5gs
+  chart:
+    spec:
+      chart: open5gs
+      version: "2.2.6"
+      sourceRef: {kind: HelmRepository, name: gradiant}
+  install: {remediation: {retries: 3}}
+  upgrade: {remediation: {retries: 3}}
+  valuesFrom:
+    - kind: ConfigMap
+      name: open5gs-values
+      valuesKey: values.yaml
+  # The WebUI subchart hardcodes an init container image
+  # (bitnami/mongodb:4.4.1-debian-10-r39) that no longer exists on any registry.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target: {kind: Deployment, name: open5gs-webui}
+            patch: |
+              - op: replace
+                path: /spec/template/spec/initContainers/0/image
+                value: docker.io/bitnamilegacy/mongodb:5.0.10-debian-11-r3

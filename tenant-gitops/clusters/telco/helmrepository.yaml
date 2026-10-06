@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: gradiant
+  namespace: open5gs
+spec:
+  type: oci
+  url: oci://registry-1.docker.io/gradiant
+  interval: 10m

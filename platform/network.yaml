@@ -1,0 +1,24 @@
+# The telco's data-plane slice (net1): a VLAN on the fiber company's br-dp bridge.
+# On real hardware this NAD would be an SR-IOV VF instead of a bridge VLAN.
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: telco-dp
+  namespace: telco
+spec:
+  config: '{
+    "cniVersion": "0.4.0",
+    "name": "telco-dp",
+    "plugins": [
+      {
+        "type": "bridge",
+        "bridge": "br-dp",
+        "vlan": 300,
+        "ipam": {
+          "type": "whereabouts",
+          "range": "10.20.0.0/24",
+          "range_start": "10.20.0.11",
+          "range_end": "10.20.0.50"
+        }
+      }
+    ]}'

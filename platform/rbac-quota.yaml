@@ -1,0 +1,35 @@
+# What the fiber company grants the telco: full control inside its namespace,
+# bounded by a quota. The telco cannot see other namespaces.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: telco-operator, namespace: telco}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: telco-operator, namespace: telco}
+rules:
+  - apiGroups: ["kubevirt.io", "cdi.kubevirt.io"]
+    resources: ["*"]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log, services, configmaps, secrets, persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [k8s.cni.cncf.io]
+    resources: [network-attachment-definitions]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: telco-operator, namespace: telco}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: telco-operator}
+subjects:
+  - {kind: ServiceAccount, name: telco-operator, namespace: telco}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: telco-quota, namespace: telco}
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    requests.storage: 100Gi

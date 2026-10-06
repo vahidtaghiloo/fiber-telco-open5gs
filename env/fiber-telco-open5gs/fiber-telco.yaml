@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------
+# Scenario: a FIBER COMPANY owns the infrastructure (this Sylva workload
+# cluster). A TELCO rents a slice (namespace, quota, VLAN data plane, KubeVirt
+# VMs) and runs its OWN Kubernetes cluster inside those VMs, with Open5GS
+# (5G core + WebUI) on top.
+#
+#   cd ~/sylva-core
+#   ./apply-workload-cluster.sh environment-values/workload-clusters/fiber-telco-open5gs
+# ---------------------------------------------------------------------------
+
+source_templates:
+  fiber-telco:
+    kind: GitRepository
+    spec:
+      # TODO: URL of wherever you push the fiber-telco-open5gs directory.
+      url: https://github.com/CHANGE-ME/fiber-telco-open5gs.git
+      ref:
+        branch: main
+      interval: 1m
+
+units:
+
+  # 1. what the fiber company provisions for the telco: namespace, RBAC,
+  #    quota and the VLAN data-plane slice
+  telco-slice:
+    info:
+      description: telco namespace, RBAC, quota and Multus data-plane slice (VLAN 300)
+    enabled: true
+    unit_templates:
+    - base-deps
+    repo: fiber-telco
+    depends_on:
+      multus: true
+    kustomization_spec:
+      path: ./platform
+      targetNamespace: null
+      prune: true
+      wait: true
+      timeout: 5m
+
+  # 2. the telco's two VMs (k3s server + agent); cloud-init also installs Flux
+  #    in the telco cluster, which then deploys Open5GS from the same repo
+  telco-cluster-vms:
+    info:
+      description: telco-owned Kubernetes cluster on two KubeVirt VMs (k3s + Flux)
+    enabled: true
+    annotations:
+      sylvactl/unitTimeout: 1800s
+    unit_templates:
+    - base-deps
+    repo: fiber-telco
+    depends_on:
+      telco-slice: true
+      kubevirt: true
+    kustomization_spec:
+      path: ./platform/vms
+      targetNamespace: null
+      prune: true
+      wait: true
+      timeout: 25m
