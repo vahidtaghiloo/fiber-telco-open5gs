@@ -25,6 +25,16 @@ spec:
   ports:
     - {port: 6443, targetPort: 6443}
 ---
+# Lets the fiber company's cluster reach the telco's Open5GS WebUI (NodePort 30999 on
+# telco-core, where the WebUI runs) for 'kubectl port-forward svc/telco-core-webui'.
+apiVersion: v1
+kind: Service
+metadata: {name: telco-core-webui, namespace: telco}
+spec:
+  selector: {kubevirt.io/domain: telco-core}
+  ports:
+    - {port: 9999, targetPort: 30999}
+---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
