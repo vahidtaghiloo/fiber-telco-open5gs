@@ -94,7 +94,7 @@ stringData:
           ip -4 -br addr
           echo "net1 address: $NET1_IP on $IF"
           NODEIP="--node-ip $NET1_IP"
-          curl -sfL https://get.k3s.io | K3S_TOKEN=fiber-telco-demo-token sh -s - server $NODEIP \
+          curl -sfL https://get.k3s.io | K3S_TOKEN=fiber-telco-demo-token sh -s - server $NODEIP --flannel-iface $IF \
             --tls-san telco-cp-api.telco.svc.cluster.local \
             --node-taint CriticalAddonsOnly=true:NoExecute \
             --disable traefik --disable servicelb --disable metrics-server
@@ -160,7 +160,7 @@ stringData:
           echo "net1 address: $NET1_IP on $IF"
           NODEIP="--node-ip $NET1_IP"
           curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
-            K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
+            K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP --flannel-iface $IF \
             --node-label telco.example/site=core
     runcmd:
       - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
@@ -218,7 +218,7 @@ stringData:
           echo "net1 address: $NET1_IP on $IF"
           NODEIP="--node-ip $NET1_IP"
           curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
-            K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
+            K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP --flannel-iface $IF \
             --node-label telco.example/site=edge
     runcmd:
       - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
