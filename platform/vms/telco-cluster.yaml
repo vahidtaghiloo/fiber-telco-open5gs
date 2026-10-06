@@ -17,250 +17,363 @@
 #
 # The Ubuntu image is imported with CDI DataVolumes, not containerDisk
 # (KubeVirt 1.7 + k8s 1.36 bug, kubevirt#17858).
-apiVersion: v1
-kind: Service
-metadata: {name: telco-cp-api, namespace: telco}
-spec:
-  selector: {kubevirt.io/domain: telco-cp}
-  ports:
-    - {port: 6443, targetPort: 6443}
+#
+# Each VM's cloud-init lives in its own Secret (<vm>-cloudinit, key: userdata) and is
+# referenced with userDataSecretRef: KubeVirt rejects inline cloudInitNoCloud.userData
+# above 2048 bytes, and the telco-cp bootstrap is larger than that.
 ---
-# Lets the fiber company's cluster reach the telco's Open5GS WebUI (NodePort 30999 on
-# telco-core, where the WebUI runs) for 'kubectl port-forward svc/telco-core-webui'.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telco-cp-cloudinit
+  namespace: telco
+type: Opaque
+stringData:
+  userdata: |
+    #cloud-config
+    password: sylva-demo
+    chpasswd: {expire: false}
+    ssh_pwauth: true
+    write_files:
+      - path: /root/flux-sync.yaml
+        content: |
+          apiVersion: source.toolkit.fluxcd.io/v1
+          kind: GitRepository
+          metadata: {name: telco, namespace: flux-system}
+          spec:
+            interval: 1m
+            # TODO: set to the URL you push this repo to
+            url: https://github.com/vahidtaghiloo/fiber-telco-open5gs.git
+            ref: {branch: main}
+          ---
+          apiVersion: kustomize.toolkit.fluxcd.io/v1
+          kind: Kustomization
+          metadata: {name: telco-open5gs, namespace: flux-system}
+          spec:
+            interval: 5m
+            prune: true
+            sourceRef: {kind: GitRepository, name: telco}
+            path: ./tenant-gitops/clusters/telco
+      - path: /root/bootstrap.sh
+        permissions: "0755"
+        content: |
+          #!/bin/bash
+          exec >>/var/log/telco-bootstrap.log 2>&1
+          set -x
+          # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
+          apt-get update
+          apt-get install -y linux-modules-extra-$(uname -r) || true
+          modprobe sctp || true
+          echo sctp > /etc/modules-load.d/sctp.conf
+          # net1 = the interface that is not the default-route one (eth0/masquerade)
+          NET1IP=""
+          for i in $(seq 1 24); do
+            DEF=$(ip -4 route show default | awk '{print $5; exit}')
+            NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
+            [ -n "$NET1IP" ] && break
+            sleep 5
+          done
+          NODEIP=""
+          [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
+          echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
+          curl -sfL https://get.k3s.io | K3S_TOKEN=fiber-telco-demo-token sh -s - server $NODEIP \
+            --tls-san telco-cp-api.telco.svc.cluster.local \
+            --node-taint CriticalAddonsOnly=true:NoExecute \
+            --disable traefik --disable servicelb --disable metrics-server
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          until k3s kubectl get nodes 2>/dev/null | grep -q ' Ready'; do sleep 5; done
+          k3s kubectl apply -f https://github.com/fluxcd/flux2/releases/download/v2.8.8/install.yaml
+          until k3s kubectl get crd gitrepositories.source.toolkit.fluxcd.io 2>/dev/null; do sleep 5; done
+          sleep 15
+          k3s kubectl apply -f /root/flux-sync.yaml
+    runcmd:
+      - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telco-core-cloudinit
+  namespace: telco
+type: Opaque
+stringData:
+  userdata: |
+    #cloud-config
+    password: sylva-demo
+    chpasswd: {expire: false}
+    ssh_pwauth: true
+    write_files:
+      - path: /root/bootstrap.sh
+        permissions: "0755"
+        content: |
+          #!/bin/bash
+          exec >>/var/log/telco-bootstrap.log 2>&1
+          set -x
+          # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
+          apt-get update
+          apt-get install -y linux-modules-extra-$(uname -r) || true
+          modprobe sctp || true
+          echo sctp > /etc/modules-load.d/sctp.conf
+          # net1 = the interface that is not the default-route one (eth0/masquerade)
+          NET1IP=""
+          for i in $(seq 1 24); do
+            DEF=$(ip -4 route show default | awk '{print $5; exit}')
+            NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
+            [ -n "$NET1IP" ] && break
+            sleep 5
+          done
+          NODEIP=""
+          [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
+          echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
+          curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
+            K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
+            --node-label telco.example/site=core
+    runcmd:
+      - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telco-edge-cloudinit
+  namespace: telco
+type: Opaque
+stringData:
+  userdata: |
+    #cloud-config
+    password: sylva-demo
+    chpasswd: {expire: false}
+    ssh_pwauth: true
+    write_files:
+      - path: /root/bootstrap.sh
+        permissions: "0755"
+        content: |
+          #!/bin/bash
+          exec >>/var/log/telco-bootstrap.log 2>&1
+          set -x
+          # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
+          apt-get update
+          apt-get install -y linux-modules-extra-$(uname -r) || true
+          modprobe sctp || true
+          echo sctp > /etc/modules-load.d/sctp.conf
+          # net1 = the interface that is not the default-route one (eth0/masquerade)
+          NET1IP=""
+          for i in $(seq 1 24); do
+            DEF=$(ip -4 route show default | awk '{print $5; exit}')
+            NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
+            [ -n "$NET1IP" ] && break
+            sleep 5
+          done
+          NODEIP=""
+          [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
+          echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
+          curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
+            K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
+            --node-label telco.example/site=edge
+    runcmd:
+      - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+---
 apiVersion: v1
 kind: Service
-metadata: {name: telco-core-webui, namespace: telco}
+metadata:
+  name: telco-cp-api
+  namespace: telco
 spec:
-  selector: {kubevirt.io/domain: telco-core}
+  selector:
+    kubevirt.io/domain: telco-cp
   ports:
-    - {port: 9999, targetPort: 30999}
+  - port: 6443
+    targetPort: 6443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telco-core-webui
+  namespace: telco
+spec:
+  selector:
+    kubevirt.io/domain: telco-core
+  ports:
+  - port: 9999
+    targetPort: 30999
 ---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: telco-cp
   namespace: telco
-  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-server}
+  labels:
+    fiber.example/tenant: telco
+    fiber.example/role: k3s-server
 spec:
   runStrategy: Always
   dataVolumeTemplates:
-    - metadata: {name: telco-cp-root}
-      spec:
-        storage: {resources: {requests: {storage: 30Gi}}}
-        source: {registry: {url: "docker://quay.io/containerdisks/ubuntu:22.04"}}
+  - metadata:
+      name: telco-cp-root
+    spec:
+      storage:
+        resources:
+          requests:
+            storage: 30Gi
+      source:
+        registry:
+          url: docker://quay.io/containerdisks/ubuntu:22.04
   template:
     metadata:
-      labels: {kubevirt.io/domain: telco-cp, fiber.example/tenant: telco}
+      labels:
+        kubevirt.io/domain: telco-cp
+        fiber.example/tenant: telco
     spec:
       domain:
-        cpu: {cores: 2}
+        cpu:
+          cores: 2
         devices:
           disks:
-            - {name: rootdisk, disk: {bus: virtio}}
-            - {name: cloudinitdisk, disk: {bus: virtio}}
+          - name: rootdisk
+            disk:
+              bus: virtio
+          - name: cloudinitdisk
+            disk:
+              bus: virtio
           interfaces:
-            - {name: default, masquerade: {}}
-            - {name: dataplane, bridge: {}}
-        resources: {requests: {memory: 4Gi}}
+          - name: default
+            masquerade: {}
+          - name: dataplane
+            bridge: {}
+        resources:
+          requests:
+            memory: 4Gi
       networks:
-        - {name: default, pod: {}}
-        - {name: dataplane, multus: {networkName: telco-dp}}
+      - name: default
+        pod: {}
+      - name: dataplane
+        multus:
+          networkName: telco-dp
       volumes:
-        - {name: rootdisk, dataVolume: {name: telco-cp-root}}
-        - name: cloudinitdisk
-          cloudInitNoCloud:
-            userData: |
-              #cloud-config
-              password: sylva-demo
-              chpasswd: {expire: false}
-              ssh_pwauth: true
-              write_files:
-                - path: /root/flux-sync.yaml
-                  content: |
-                    apiVersion: source.toolkit.fluxcd.io/v1
-                    kind: GitRepository
-                    metadata: {name: telco, namespace: flux-system}
-                    spec:
-                      interval: 1m
-                      # TODO: set to the URL you push this repo to
-                      url: https://github.com/vahidtaghiloo/fiber-telco-open5gs.git
-                      ref: {branch: main}
-                    ---
-                    apiVersion: kustomize.toolkit.fluxcd.io/v1
-                    kind: Kustomization
-                    metadata: {name: telco-open5gs, namespace: flux-system}
-                    spec:
-                      interval: 5m
-                      prune: true
-                      sourceRef: {kind: GitRepository, name: telco}
-                      path: ./tenant-gitops/clusters/telco
-                - path: /root/bootstrap.sh
-                  permissions: "0755"
-                  content: |
-                    #!/bin/bash
-                    exec >>/var/log/telco-bootstrap.log 2>&1
-                    set -x
-                    # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
-                    apt-get update
-                    apt-get install -y linux-modules-extra-$(uname -r) || true
-                    modprobe sctp || true
-                    echo sctp > /etc/modules-load.d/sctp.conf
-                    # net1 = the interface that is not the default-route one (eth0/masquerade)
-                    NET1IP=""
-                    for i in $(seq 1 24); do
-                      DEF=$(ip -4 route show default | awk '{print $5; exit}')
-                      NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
-                      [ -n "$NET1IP" ] && break
-                      sleep 5
-                    done
-                    NODEIP=""
-                    [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
-                    echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
-                    curl -sfL https://get.k3s.io | K3S_TOKEN=fiber-telco-demo-token sh -s - server $NODEIP \
-                      --tls-san telco-cp-api.telco.svc.cluster.local \
-                      --node-taint CriticalAddonsOnly=true:NoExecute \
-                      --disable traefik --disable servicelb --disable metrics-server
-                    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-                    until k3s kubectl get nodes 2>/dev/null | grep -q ' Ready'; do sleep 5; done
-                    k3s kubectl apply -f https://github.com/fluxcd/flux2/releases/download/v2.8.8/install.yaml
-                    until k3s kubectl get crd gitrepositories.source.toolkit.fluxcd.io 2>/dev/null; do sleep 5; done
-                    sleep 15
-                    k3s kubectl apply -f /root/flux-sync.yaml
-              runcmd:
-                - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+      - name: rootdisk
+        dataVolume:
+          name: telco-cp-root
+      - name: cloudinitdisk
+        cloudInitNoCloud:
+          userDataSecretRef:
+            name: telco-cp-cloudinit
 ---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: telco-core
   namespace: telco
-  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-agent-core}
+  labels:
+    fiber.example/tenant: telco
+    fiber.example/role: k3s-agent-core
 spec:
   runStrategy: Always
   dataVolumeTemplates:
-    - metadata: {name: telco-core-root}
-      spec:
-        storage: {resources: {requests: {storage: 30Gi}}}
-        source: {registry: {url: "docker://quay.io/containerdisks/ubuntu:22.04"}}
+  - metadata:
+      name: telco-core-root
+    spec:
+      storage:
+        resources:
+          requests:
+            storage: 30Gi
+      source:
+        registry:
+          url: docker://quay.io/containerdisks/ubuntu:22.04
   template:
     metadata:
-      labels: {kubevirt.io/domain: telco-core, fiber.example/tenant: telco}
+      labels:
+        kubevirt.io/domain: telco-core
+        fiber.example/tenant: telco
     spec:
       domain:
-        cpu: {cores: 8}
+        cpu:
+          cores: 8
         devices:
           disks:
-            - {name: rootdisk, disk: {bus: virtio}}
-            - {name: cloudinitdisk, disk: {bus: virtio}}
+          - name: rootdisk
+            disk:
+              bus: virtio
+          - name: cloudinitdisk
+            disk:
+              bus: virtio
           interfaces:
-            - {name: default, masquerade: {}}
-            - {name: dataplane, bridge: {}}
-        resources: {requests: {memory: 12Gi}}
+          - name: default
+            masquerade: {}
+          - name: dataplane
+            bridge: {}
+        resources:
+          requests:
+            memory: 12Gi
       networks:
-        - {name: default, pod: {}}
-        - {name: dataplane, multus: {networkName: telco-dp}}
+      - name: default
+        pod: {}
+      - name: dataplane
+        multus:
+          networkName: telco-dp
       volumes:
-        - {name: rootdisk, dataVolume: {name: telco-core-root}}
-        - name: cloudinitdisk
-          cloudInitNoCloud:
-            userData: |
-              #cloud-config
-              password: sylva-demo
-              chpasswd: {expire: false}
-              ssh_pwauth: true
-              write_files:
-                - path: /root/bootstrap.sh
-                  permissions: "0755"
-                  content: |
-                    #!/bin/bash
-                    exec >>/var/log/telco-bootstrap.log 2>&1
-                    set -x
-                    # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
-                    apt-get update
-                    apt-get install -y linux-modules-extra-$(uname -r) || true
-                    modprobe sctp || true
-                    echo sctp > /etc/modules-load.d/sctp.conf
-                    # net1 = the interface that is not the default-route one (eth0/masquerade)
-                    NET1IP=""
-                    for i in $(seq 1 24); do
-                      DEF=$(ip -4 route show default | awk '{print $5; exit}')
-                      NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
-                      [ -n "$NET1IP" ] && break
-                      sleep 5
-                    done
-                    NODEIP=""
-                    [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
-                    echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
-                    curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
-                      K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
-                      --node-label telco.example/site=core
-              runcmd:
-                - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+      - name: rootdisk
+        dataVolume:
+          name: telco-core-root
+      - name: cloudinitdisk
+        cloudInitNoCloud:
+          userDataSecretRef:
+            name: telco-core-cloudinit
 ---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: telco-edge
   namespace: telco
-  labels: {fiber.example/tenant: telco, fiber.example/role: k3s-agent-edge}
+  labels:
+    fiber.example/tenant: telco
+    fiber.example/role: k3s-agent-edge
 spec:
   runStrategy: Always
   dataVolumeTemplates:
-    - metadata: {name: telco-edge-root}
-      spec:
-        storage: {resources: {requests: {storage: 30Gi}}}
-        source: {registry: {url: "docker://quay.io/containerdisks/ubuntu:22.04"}}
+  - metadata:
+      name: telco-edge-root
+    spec:
+      storage:
+        resources:
+          requests:
+            storage: 30Gi
+      source:
+        registry:
+          url: docker://quay.io/containerdisks/ubuntu:22.04
   template:
     metadata:
-      labels: {kubevirt.io/domain: telco-edge, fiber.example/tenant: telco}
+      labels:
+        kubevirt.io/domain: telco-edge
+        fiber.example/tenant: telco
     spec:
       domain:
-        cpu: {cores: 4}
+        cpu:
+          cores: 4
         devices:
           disks:
-            - {name: rootdisk, disk: {bus: virtio}}
-            - {name: cloudinitdisk, disk: {bus: virtio}}
+          - name: rootdisk
+            disk:
+              bus: virtio
+          - name: cloudinitdisk
+            disk:
+              bus: virtio
           interfaces:
-            - {name: default, masquerade: {}}
-            - {name: dataplane, bridge: {}}
-        resources: {requests: {memory: 8Gi}}
+          - name: default
+            masquerade: {}
+          - name: dataplane
+            bridge: {}
+        resources:
+          requests:
+            memory: 8Gi
       networks:
-        - {name: default, pod: {}}
-        - {name: dataplane, multus: {networkName: telco-dp}}
+      - name: default
+        pod: {}
+      - name: dataplane
+        multus:
+          networkName: telco-dp
       volumes:
-        - {name: rootdisk, dataVolume: {name: telco-edge-root}}
-        - name: cloudinitdisk
-          cloudInitNoCloud:
-            userData: |
-              #cloud-config
-              password: sylva-demo
-              chpasswd: {expire: false}
-              ssh_pwauth: true
-              write_files:
-                - path: /root/bootstrap.sh
-                  permissions: "0755"
-                  content: |
-                    #!/bin/bash
-                    exec >>/var/log/telco-bootstrap.log 2>&1
-                    set -x
-                    # SCTP is needed by the AMF (NGAP). Ubuntu cloud kernels ship it in -extra.
-                    apt-get update
-                    apt-get install -y linux-modules-extra-$(uname -r) || true
-                    modprobe sctp || true
-                    echo sctp > /etc/modules-load.d/sctp.conf
-                    # net1 = the interface that is not the default-route one (eth0/masquerade)
-                    NET1IP=""
-                    for i in $(seq 1 24); do
-                      DEF=$(ip -4 route show default | awk '{print $5; exit}')
-                      NET1IP=$(ip -4 -o addr show scope global | awk -v d="$DEF" '$2!=d {split($4,a,"/"); print a[1]; exit}')
-                      [ -n "$NET1IP" ] && break
-                      sleep 5
-                    done
-                    NODEIP=""
-                    [ -n "$NET1IP" ] && NODEIP="--node-ip $NET1IP"
-                    echo "net1 address: ${NET1IP:-NONE, falling back to eth0}"
-                    curl -sfL https://get.k3s.io | K3S_URL=https://telco-cp-api.telco.svc.cluster.local:6443 \
-                      K3S_TOKEN=fiber-telco-demo-token sh -s - agent $NODEIP \
-                      --node-label telco.example/site=edge
-              runcmd:
-                - [bash, -c, "nohup /root/bootstrap.sh >/dev/null 2>&1 &"]
+      - name: rootdisk
+        dataVolume:
+          name: telco-edge-root
+      - name: cloudinitdisk
+        cloudInitNoCloud:
+          userDataSecretRef:
+            name: telco-edge-cloudinit
