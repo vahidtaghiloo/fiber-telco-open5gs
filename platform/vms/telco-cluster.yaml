@@ -83,7 +83,7 @@ spec:
                     spec:
                       interval: 1m
                       # TODO: set to the URL you push this repo to
-                      url: https://github.com/CHANGE-ME/fiber-telco-open5gs.git
+                      url: https://github.com/vahidtaghiloo/fiber-telco-open5gs.git
                       ref: {branch: main}
                     ---
                     apiVersion: kustomize.toolkit.fluxcd.io/v1

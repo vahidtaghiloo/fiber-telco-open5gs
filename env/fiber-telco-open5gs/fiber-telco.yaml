@@ -13,7 +13,7 @@ source_templates:
     kind: GitRepository
     spec:
       # TODO: URL of wherever you push the fiber-telco-open5gs directory.
-      url: https://github.com/CHANGE-ME/fiber-telco-open5gs.git
+      url: https://github.com/vahidtaghiloo/fiber-telco-open5gs.git
       ref:
         branch: main
       interval: 1m
