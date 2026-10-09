@@ -1,0 +1,7 @@
+# Baseline namespace on the Sylva workload cluster. 'privileged' because the UPF needs NET_ADMIN/tun.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: open5gs-direct
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
