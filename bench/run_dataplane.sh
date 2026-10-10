@@ -7,6 +7,7 @@
 # usage (inside telco-cp):  OUT=~/bench-results/nested/dp RUNS=10 DURATION=20 ./run_dataplane.sh
 # baseline (server):        KUBECTL="kubectl $WKC" UE_NS=open5gs-direct OUT=$HOME/bench-results/direct/dp ./run_dataplane.sh
 # Prerequisite: manifests/bench-ns-and-servers.yaml applied in the SAME cluster as the UE pod.
+# PATHS="ue" runs only the UE path (use it to repeat that half without redoing the pod path).
 set -euo pipefail
 KUBECTL=${KUBECTL:-"sudo k3s kubectl"}
 UE_NS=${UE_NS:-open5gs}
@@ -15,6 +16,7 @@ UE_CONTAINER=${UE_CONTAINER:-ues}
 OUT=${OUT:?set OUT to the output directory}
 RUNS=${RUNS:-10}
 DURATION=${DURATION:-20}
+PATHS=${PATHS:-"pod ue"}
 mkdir -p "$OUT"
 
 SRV=$($KUBECTL -n bench get pod -l app=iperf-server -o jsonpath='{.items[0].status.podIP}')
@@ -38,16 +40,45 @@ INNER
 
 split_out() { awk -v out="$OUT" '/^@@@ /{f=$2; next} f{print > (out "/" f)}'; }
 
+case " $PATHS " in *" pod "*)
 echo "== path: pod -> server (baseline without 5G)"
 suite pod "" "" "" > /tmp/suite_pod.sh
 $KUBECTL -n bench exec -i deploy/netshoot-edge -- sh -s < /tmp/suite_pod.sh | split_out
+;; esac
 
+case " $PATHS " in *" ue "*)
 echo "== path: UE (uesimtun0) -> UPF -> server"
 UEPOD=$($KUBECTL -n "$UE_NS" get pods -l "$UE_SELECTOR" -o name | head -1 | sed 's#pod/##')
 [ -n "$UEPOD" ] || { echo "UE pod not found"; exit 1; }
 suite ue '-B $TUNIP --bind-dev uesimtun0' '-I uesimtun0' \
   'TUNIP=$(ip -4 -o addr show uesimtun0 | awk "{print \$4}" | cut -d/ -f1); echo "tun ip: $TUNIP" >&2' > /tmp/suite_ue.sh
-$KUBECTL -n "$UE_NS" debug -i --quiet "$UEPOD" --image=docker.io/nicolaka/netshoot:latest \
-  --target="$UE_CONTAINER" --profile=sysadmin -- sh -s < /tmp/suite_ue.sh | split_out
+
+# The suite runs as the COMMAND of an ephemeral container (no stdin/stdout attach, which proved unreliable);
+# its output is read from the container log once it has terminated.
+CNAME="bench-ue-$(date +%s)"
+$KUBECTL -n "$UE_NS" debug "$UEPOD" --image=docker.io/nicolaka/netshoot:latest \
+  --target="$UE_CONTAINER" --profile=sysadmin -c "$CNAME" -- sh -c "$(cat /tmp/suite_ue.sh)"
+echo "ephemeral container $CNAME started; waiting for the suite to finish"
+LIMIT=$(( 5 * RUNS * (DURATION + 3) + 400 ))
+code=""
+for _ in $(seq 1 $(( LIMIT / 10 ))); do
+  code=$($KUBECTL -n "$UE_NS" get pod "$UEPOD" \
+    -o jsonpath="{.status.ephemeralContainerStatuses[?(@.name==\"$CNAME\")].state.terminated.exitCode}" 2>/dev/null || true)
+  [ -n "$code" ] && break
+  sleep 10
+done
+[ -n "$code" ] || { echo "timed out waiting for $CNAME (see: $KUBECTL -n $UE_NS logs $UEPOD -c $CNAME)"; exit 1; }
+echo "container finished with exit code $code"
+$KUBECTL -n "$UE_NS" logs "$UEPOD" -c "$CNAME" | split_out
+;; esac
 
 ls -l "$OUT"
+
+# A path that produced no output must not pass silently (this happened once: the UE half wrote nothing).
+bad=0
+for pth in $PATHS; do
+  n=$(ls "$OUT"/iperf_${pth}_*.json 2>/dev/null | wc -l)
+  [ "$n" -ge 5 ] || { echo "WARNING: path '$pth' has $n iperf files (expected 5)"; bad=1; }
+  [ -s "$OUT/ping_${pth}.txt" ] || { echo "WARNING: path '$pth' has no ping_${pth}.txt"; bad=1; }
+done
+[ "$bad" = 0 ] && echo "OK: all expected files are present" || { echo "INCOMPLETE: see the warnings above"; exit 1; }
