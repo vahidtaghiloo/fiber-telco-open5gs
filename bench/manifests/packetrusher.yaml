@@ -7,6 +7,7 @@
 #                                   used for iperf3/ping bound to a UE address and to read the report
 # shareProcessNamespace lets `tools` send the SIGINT that makes PacketRusher write its report.
 # PLMN 999/70, TAC 1, slice SST 1 / SD 111111 and the subscriber keys match the Open5GS values of this repo.
+# Advertised UE algorithms: nia2 + nea0 (as in PacketRusher's own Open5GS CI); nea2 is switched by NEA2=true|false.
 # The gNB id (000009) differs from UERANSIM's gNB; UEs use IMSI 99970 + msin counting up from 0000000001, the same
 # subscribers UERANSIM uses, so do not run both UE generators at the same time.
 apiVersion: v1
@@ -58,7 +59,7 @@ data:
       ciphering:
         nea0: true
         nea1: false
-        nea2: true
+        nea2: @NEA2@
         nea3: false
     amfif:
       - ip: "@AMF_IP@"

@@ -24,6 +24,7 @@ IMAGE=${IMAGE:-ghcr.io/hewlettpackard/packetrusher:v2.0.0}
 BACKEND=${BACKEND:-userspace}          # ebpf needs Linux >= 6.6; the telco VMs run 5.15
 TR=${TR:-10}                            # ms between UE registrations (PacketRusher's own default is 500)
 SLACK=${SLACK:-30}                      # seconds to let a run settle after the last registration
+NEA2=${NEA2:-false}                     # advertise NEA2 as well (upstream's Open5GS CI advertises nia2 + nea0 only)
 NODESEL=${NODESEL:-1}                   # 1 = pin the pod to telco-edge; 0 = no nodeSelector (direct variant)
 AMF_SVC=${AMF_SVC:-open5gs-amf-ngap}
 UE_DEP=${UE_DEP:-ueransim-ueransim-gnb-ues}
@@ -43,7 +44,7 @@ render() {   # $1 = N, $2 = "tunnel" or ""
   if [ "${2:-}" = tunnel ]; then tunnel_expr="s#@TUNNEL_LINE@#--tunnel#"; else tunnel_expr="/@TUNNEL_LINE@/d"; fi
   if [ "$NODESEL" = 1 ]; then nodesel_expr="s#@NODESEL@#nodeSelector: {telco.example/site: edge}#"; else nodesel_expr="/@NODESEL@/d"; fi
   sed -e "s#@NS@#$NS#g" -e "s#@IMAGE@#$IMAGE#g" -e "s#@BACKEND@#$BACKEND#g" -e "s#@N@#$1#g" -e "s#@TR@#$TR#g" \
-      -e "s#@AMF_IP@#$amf#g" -e "$tunnel_expr" -e "$nodesel_expr" "$TPL"
+      -e "s#@AMF_IP@#$amf#g" -e "s#@NEA2@#$NEA2#g" -e "$tunnel_expr" -e "$nodesel_expr" "$TPL"
 }
 
 state() {    # $1 = container, $2 = running|terminated  -> prints the state's JSON (empty if not in that state)
@@ -65,14 +66,23 @@ start_run() {  # $1 = N, $2 = "tunnel" or ""
   echo "pod did not start in time:"; $K describe pod packetrusher | tail -25; return 1
 }
 
-stop_run() {   # SIGINT makes PacketRusher write its report; waits for it to exit
-  $K exec packetrusher -c tools -- sh -c 'kill -INT $(pidof packetrusher)' >/dev/null 2>&1 || true
-  local i
-  for i in $(seq 1 45); do
+stop_run() {   # SIGINT makes PacketRusher write its report; waits for it to exit (and says what happened if it does not)
+  local out i
+  out=$($K exec packetrusher -c tools -- sh -c 'p=$(pidof packetrusher); echo "pid(s) of packetrusher: [$p]"; kill -INT $p; echo "kill -INT exit status: $?"' 2>&1) || true
+  echo "   stop: $out" | tr '\n' ' '; echo
+  for i in $(seq 1 15); do
     [ -n "$(state packetrusher terminated)" ] && return 0
     sleep 2
   done
-  echo "WARNING: packetrusher did not exit within 90 s after SIGINT"
+  echo "WARNING: packetrusher did not exit within 30 s after SIGINT. Processes in the pod:"
+  $K exec packetrusher -c tools -- ps 2>&1 | head -15 || true
+  echo "last lines of its log:"; $K logs packetrusher -c packetrusher --tail=5 2>&1 || true
+  $K exec packetrusher -c tools -- sh -c 'kill -TERM $(pidof packetrusher)' >/dev/null 2>&1 || true
+  for i in $(seq 1 10); do
+    [ -n "$(state packetrusher terminated)" ] && { echo "(it exited after SIGTERM)"; return 0; }
+    sleep 2
+  done
+  echo "WARNING: still running after SIGTERM; the pod will be deleted without a report"
 }
 
 collect() {    # $1 = file stem
@@ -90,6 +100,8 @@ case "$MODE" in
 smoke)
   echo "== smoke run: 2 UEs with a tunnel (image $IMAGE, backend $BACKEND)"
   start_run 2 tunnel
+  # capture the N2 (SCTP) traffic in the tools container, to be able to look at the NAS messages if something fails
+  $K exec packetrusher -c tools -- sh -c 'nohup tcpdump -U -i any -w /out/n2.pcap sctp >/tmp/tcpdump.log 2>&1 &' >/dev/null 2>&1 || true
   echo "-- waiting 25 s for registration and PDU sessions"; sleep 25
   echo "-- init container (rendered config head):"; $K logs packetrusher -c render-config 2>&1 | head -12
   echo "-- packetrusher log (last 40 lines):"; $K logs packetrusher -c packetrusher 2>&1 | tail -40
@@ -99,7 +111,10 @@ smoke)
     SRV=$($KUBECTL -n bench get pod -l app=iperf-server -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
     if [ -n "$SRV" ]; then echo "-- ping $SRV from the UE address:"; $K exec packetrusher -c tools -- ping -c 3 -I "$UEIP" "$SRV" || true; fi
   fi
+  echo "-- NAS security capability, from the capture (Registration Request, Security Mode Command):"
+  $K exec packetrusher -c tools -- sh -c 'if command -v tshark >/dev/null; then tshark -r /out/n2.pcap -Y "nas-5gs" -V 2>/dev/null | grep -i -E "Message type|security capab|5G-EA|5G-IA|EEA|EIA|Selected NAS|replayed" | head -80; else echo "(no tshark; raw packets with a NAS payload follow)"; tcpdump -nn -r /out/n2.pcap -x 2>/dev/null | head -150; fi' 2>&1 || true
   stop_run; collect smoke
+  $K cp -c tools packetrusher:/out/n2.pcap "$OUT/smoke_n2.pcap" >/dev/null 2>&1 && echo "(capture saved: $OUT/smoke_n2.pcap)" || true
   echo "-- report.json:"; cat "$OUT/smoke.json" 2>/dev/null || echo "(none)"
   cleanup
   echo "== smoke done; files: $OUT/smoke.log, $OUT/smoke.json"
