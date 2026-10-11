@@ -16,10 +16,11 @@ POD=$($KUBECTL -n "$NS" get pods -o name | grep populate | head -1)
 [ -n "$POD" ] || { echo "no populate pod in namespace $NS"; exit 1; }
 echo "provisioning subscribers 3..$MAX through $POD (can take a few minutes)"
 $KUBECTL -n "$NS" exec "$POD" -- sh -c "
-i=3
+i=3; skipped=0
 while [ \$i -le $MAX ]; do
   imsi=\$(printf '99970%010d' \$i)
-  open5gs-dbctl add_ue_with_slice \$imsi $KEY $OPC internet 1 111111 >/dev/null 2>&1 || echo \"failed: \$imsi\"
+  open5gs-dbctl add_ue_with_slice \$imsi $KEY $OPC internet 1 111111 >/dev/null 2>&1 || skipped=\$((skipped+1))
+  [ \$((i % 50)) -eq 0 ] && echo \"progress: reached \$i of $MAX (not added, probably existing already: \$skipped)\"
   i=\$((i+1))
 done
-echo done"
+echo \"done; not added (probably existing already): \$skipped\""

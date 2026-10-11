@@ -132,7 +132,11 @@ def _flatten(obj, prefix=""):
     out = {}
     if isinstance(obj, dict):
         for k, v in obj.items():
-            out.update(_flatten(v, f"{prefix}{k}_" if prefix or True else k))
+            out.update(_flatten(v, f"{prefix}{k}_"))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            name = v.get("procedure", i) if isinstance(v, dict) else i
+            out.update(_flatten(v, f"{prefix}{name}_"))
     elif isinstance(obj, bool):
         pass
     elif isinstance(obj, (int, float)):
@@ -175,10 +179,15 @@ def pr_reports(root):
         for k, v in _flatten(data).items():
             flat_rows.append({"n": n, "run": run, "key": k, "value": v})
         procs = data.get("procedures") if isinstance(data, dict) else None
-        if not isinstance(procs, dict):
-            print(f"{path}: no 'procedures' object; see pr_report_flat.csv for what the report contains")
+        # the real report (v2.0.0) is a LIST of {"procedure": "<name>", "started": ..., ...}; accept a dict keyed by name too
+        if isinstance(procs, list):
+            items = [(b.get("procedure", f"procedure{i}"), b) for i, b in enumerate(procs) if isinstance(b, dict)]
+        elif isinstance(procs, dict):
+            items = list(procs.items())
+        else:
+            print(f"{path}: no 'procedures' in the report; see pr_report_flat.csv for what it contains")
             continue
-        for name, body in procs.items():
+        for name, body in items:
             flat = _flatten(body)
             lo, mean, hi = _latency_ms(flat)
             rows.append({"n": n, "run": run, "proc": name,

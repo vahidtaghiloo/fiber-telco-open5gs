@@ -28,6 +28,8 @@ NEA2=${NEA2:-false}                     # advertise NEA2 as well (upstream's Ope
 NODESEL=${NODESEL:-1}                   # 1 = pin the pod to telco-edge; 0 = no nodeSelector (direct variant)
 AMF_SVC=${AMF_SVC:-open5gs-amf-ngap}
 UE_DEP=${UE_DEP:-ueransim-ueransim-gnb-ues}
+AMF_DEP=${AMF_DEP:-open5gs-amf}
+RESET_AMF=${RESET_AMF:-1}              # 1 = restart the AMF first (drops leftover UE contexts, see BENCHMARKS.md 16.11)
 OUT=${OUT:?set OUT to the output directory}
 RUNS=${RUNS:-10}
 DURATION=${DURATION:-20}
@@ -94,11 +96,23 @@ ue_ip() {      # address of the first UE's val* interface
   $K exec packetrusher -c tools -- sh -c "ip -4 -o addr show | awk '\$2 ~ /^val/ {split(\$4,a,\"/\"); print a[1]; exit}'" 2>/dev/null || true
 }
 
+reset_amf() {
+  # Open5GS keeps a UE's registration after the UE disappears (UERANSIM's pod is simply removed) and, when the same IMSI
+  # registers again, copies only the first bytes of the new security capability over the stored one. A UE left by UERANSIM
+  # (which advertises E-UTRA capabilities) then makes the AMF replay a longer capability than PacketRusher offered, and
+  # PacketRusher rejects the Security Mode Command. Restarting the AMF clears all such contexts.
+  [ "$RESET_AMF" = 1 ] || return 0
+  echo "-- restarting the AMF ($AMF_DEP) to drop leftover UE contexts (RESET_AMF=0 skips this)"
+  $K rollout restart deploy/"$AMF_DEP" >/dev/null && $K rollout status deploy/"$AMF_DEP" --timeout=180s >/dev/null && sleep 10 \
+    || echo "WARNING: the AMF restart did not complete; leftover contexts may make the first registrations fail"
+}
+
 cleanup() { $K delete pod packetrusher --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
 
 case "$MODE" in
 smoke)
   echo "== smoke run: 2 UEs with a tunnel (image $IMAGE, backend $BACKEND)"
+  reset_amf
   start_run 2 tunnel
   # CAPTURE=1 records the N2 (SCTP) traffic in the tools container, to look at the NAS messages if something fails
   [ "${CAPTURE:-0}" = 1 ] && $K exec packetrusher -c tools -- sh -c 'nohup tcpdump -U -i any -w /out/n2.pcap sctp >/tmp/tcpdump.log 2>&1 &' >/dev/null 2>&1 || true
@@ -119,6 +133,7 @@ smoke)
   ;;
 scaling)
   LIST=${2:-"1 10 100"}; REPS=${3:-3}
+  reset_amf
   for n in $LIST; do
     for r in $(seq 1 "$REPS"); do
       tag=$(printf 'pr_N%03d_r%02d' "$n" "$r")
@@ -130,9 +145,10 @@ scaling)
       cleanup; sleep 5
     done
   done
-  echo "finished. UERANSIM UEs were scaled to 0: restore them as described in BENCHMARKS.md section 12."
+  echo "finished. UERANSIM UEs were scaled to 0 and the AMF was restarted: to use UERANSIM again, follow BENCHMARKS.md section 12 (including restarting the UERANSIM gNB)."
   ;;
 dataplane)
+  reset_amf
   start_run 1 tunnel
   echo "-- waiting 25 s for the UE and its tunnel"; sleep 25
   UEIP=$(ue_ip); [ -n "$UEIP" ] || { echo "no UE address found (no val* interface); packetrusher log:"; $K logs packetrusher -c packetrusher 2>&1 | tail -30; cleanup; exit 1; }
