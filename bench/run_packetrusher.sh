@@ -100,8 +100,8 @@ case "$MODE" in
 smoke)
   echo "== smoke run: 2 UEs with a tunnel (image $IMAGE, backend $BACKEND)"
   start_run 2 tunnel
-  # capture the N2 (SCTP) traffic in the tools container, to be able to look at the NAS messages if something fails
-  $K exec packetrusher -c tools -- sh -c 'nohup tcpdump -U -i any -w /out/n2.pcap sctp >/tmp/tcpdump.log 2>&1 &' >/dev/null 2>&1 || true
+  # CAPTURE=1 records the N2 (SCTP) traffic in the tools container, to look at the NAS messages if something fails
+  [ "${CAPTURE:-0}" = 1 ] && $K exec packetrusher -c tools -- sh -c 'nohup tcpdump -U -i any -w /out/n2.pcap sctp >/tmp/tcpdump.log 2>&1 &' >/dev/null 2>&1 || true
   echo "-- waiting 25 s for registration and PDU sessions"; sleep 25
   echo "-- init container (rendered config head):"; $K logs packetrusher -c render-config 2>&1 | head -12
   echo "-- packetrusher log (last 40 lines):"; $K logs packetrusher -c packetrusher 2>&1 | tail -40
@@ -111,10 +111,8 @@ smoke)
     SRV=$($KUBECTL -n bench get pod -l app=iperf-server -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
     if [ -n "$SRV" ]; then echo "-- ping $SRV from the UE address:"; $K exec packetrusher -c tools -- ping -c 3 -I "$UEIP" "$SRV" || true; fi
   fi
-  echo "-- NAS security capability, from the capture (Registration Request, Security Mode Command):"
-  $K exec packetrusher -c tools -- sh -c 'if command -v tshark >/dev/null; then tshark -r /out/n2.pcap -Y "nas-5gs" -V 2>/dev/null | grep -i -E "Message type|security capab|5G-EA|5G-IA|EEA|EIA|Selected NAS|replayed" | head -80; else echo "(no tshark; raw packets with a NAS payload follow)"; tcpdump -nn -r /out/n2.pcap -x 2>/dev/null | head -150; fi' 2>&1 || true
   stop_run; collect smoke
-  $K cp -c tools packetrusher:/out/n2.pcap "$OUT/smoke_n2.pcap" >/dev/null 2>&1 && echo "(capture saved: $OUT/smoke_n2.pcap)" || true
+  [ "${CAPTURE:-0}" = 1 ] && { $K cp -c tools packetrusher:/out/n2.pcap "$OUT/smoke_n2.pcap" >/dev/null 2>&1 && echo "(capture saved: $OUT/smoke_n2.pcap)" || true; }
   echo "-- report.json:"; cat "$OUT/smoke.json" 2>/dev/null || echo "(none)"
   cleanup
   echo "== smoke done; files: $OUT/smoke.log, $OUT/smoke.json"

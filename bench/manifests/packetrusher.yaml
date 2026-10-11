@@ -111,7 +111,7 @@ spec:
       image: docker.io/nicolaka/netshoot:latest
       command: ["sleep", "infinity"]
       securityContext:
-        capabilities: {add: ["NET_ADMIN", "NET_RAW"]}
+        privileged: true        # same security context as packetrusher: a confined container is not allowed to signal a privileged one
       volumeMounts:
         - {name: out, mountPath: /out}
   volumes:
