@@ -11,12 +11,16 @@ writes: ue_times.csv   one row per UE:   n,run,imsi,reg_ms,pdu_ms,ready_ms
         iperf.csv      one row per test: path,proto,tag,run,mbps,loss_pct,jitter_ms,retrans
         ping.csv       one row per echo: path,seq,rtt_ms
         ping_summary.csv  path,sent_loss_pct
+        pr_runs.csv    PacketRusher: one row per run and procedure: n,run,proc,started,success,failure,pending,
+                       lat_min_ms,lat_mean_ms,lat_max_ms   (from pr/pr_N<n>_r<run>.json; see BENCHMARKS.md section 16)
+        pr_report_flat.csv  every numeric field of those reports (n,run,key,value), to check the field names
 Standard library only.
 """
 import csv, glob, json, os, re, sys
 from datetime import datetime
 
-LINE = re.compile(r"^\[(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\] \[(?P<imsi>\d{15,16})\|nas\] \[\w+\] (?P<msg>.*)$")
+# With several UEs every line is prefixed [<imsi>|nas]; with a single UE (N=1) UERANSIM prints plain [nas].
+LINE = re.compile(r"^\[(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\] \[(?:(?P<imsi>\d{15,16})\|)?nas\] \[\w+\] (?P<msg>.*)$")
 EVENTS = {
     "reg_start": "Sending Initial Registration",
     "reg_ok": "Initial Registration is successful",
@@ -37,7 +41,7 @@ def parse_ue_log(path):
             continue
         for key, text in EVENTS.items():
             if m["msg"].startswith(text):
-                ev.setdefault(m["imsi"], {}).setdefault(key, ts(m["ts"]))
+                ev.setdefault(m["imsi"] or "single-ue", {}).setdefault(key, ts(m["ts"]))
     return ev
 
 
@@ -72,7 +76,7 @@ def ue_logs(root):
 def iperf_files(root):
     rows = []
     for path in sorted(glob.glob(os.path.join(root, "dp", "iperf_*.json"))):
-        m = re.match(r"iperf_(pod|ue)_(tcp|udp)_(.+)\.json$", os.path.basename(path))
+        m = re.match(r"iperf_(pod|ue|pr)_(tcp|udp)_(.+)\.json$", os.path.basename(path))
         if not m:
             continue
         pth, proto, tag = m.groups()
@@ -83,6 +87,12 @@ def iperf_files(root):
                 pos += 1
             if pos >= len(text):
                 break
+            if text[pos] != "{":          # stray text between objects (e.g. a "tun ip:" line): skip to the next JSON object
+                nxt = text.find("\n{", pos)
+                if nxt < 0:
+                    break
+                pos = nxt + 1
+                continue
             try:
                 obj, pos = dec.raw_decode(text, pos)
             except ValueError:
@@ -117,6 +127,69 @@ def ping_files(root):
     return rows, summ
 
 
+def _flatten(obj, prefix=""):
+    """{"a": {"b": 1}} -> {"a_b": 1}; keeps numbers only."""
+    out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out.update(_flatten(v, f"{prefix}{k}_" if prefix or True else k))
+    elif isinstance(obj, bool):
+        pass
+    elif isinstance(obj, (int, float)):
+        out[prefix[:-1]] = obj
+    return out
+
+
+def _latency_ms(flat):
+    """Pick min / mean / max latency out of a flattened procedure dict, whatever the exact key names are.
+    Keys are matched by words (min, max, mean/avg, sum, count); a key with 'ms' or 'milli' is taken as milliseconds,
+    anything else as seconds (PacketRusher's report uses latency_seconds_*)."""
+    got = {}
+    for k, v in flat.items():
+        kl = k.lower()
+        if "latenc" not in kl and "duration" not in kl:
+            continue
+        unit = 1.0 if ("_ms" in kl or "milli" in kl) else 1000.0
+        for word, name in (("min", "min"), ("max", "max"), ("mean", "mean"), ("avg", "mean"), ("average", "mean")):
+            if word in kl and name not in got:
+                got[name] = v * unit
+        if "sum" in kl:
+            got["sum"] = v * unit
+        if "count" in kl:
+            got["count"] = v
+    if "mean" not in got and got.get("count"):
+        got["mean"] = got.get("sum", 0) / got["count"]
+    return got.get("min", ""), got.get("mean", ""), got.get("max", "")
+
+
+def pr_reports(root):
+    rows, flat_rows = [], []
+    for path in sorted(glob.glob(os.path.join(root, "pr", "pr_N*_r*.json"))):
+        m = re.search(r"pr_N(\d+)_r(\d+)\.json$", path)
+        n, run = int(m[1]), int(m[2])
+        try:
+            data = json.load(open(path))
+        except ValueError:
+            print(f"skipping {path}: not valid JSON")
+            continue
+        for k, v in _flatten(data).items():
+            flat_rows.append({"n": n, "run": run, "key": k, "value": v})
+        procs = data.get("procedures") if isinstance(data, dict) else None
+        if not isinstance(procs, dict):
+            print(f"{path}: no 'procedures' object; see pr_report_flat.csv for what the report contains")
+            continue
+        for name, body in procs.items():
+            flat = _flatten(body)
+            lo, mean, hi = _latency_ms(flat)
+            rows.append({"n": n, "run": run, "proc": name,
+                         "started": flat.get("started", ""), "success": flat.get("success", ""),
+                         "failure": flat.get("failure", ""), "pending": flat.get("pending", ""),
+                         "lat_min_ms": round(lo, 2) if lo != "" else "",
+                         "lat_mean_ms": round(mean, 2) if mean != "" else "",
+                         "lat_max_ms": round(hi, 2) if hi != "" else ""})
+    return rows, flat_rows
+
+
 def write(path, rows, fields):
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -137,6 +210,10 @@ def main():
     prows, psumm = ping_files(root)
     write(os.path.join(root, "ping.csv"), prows, ["path", "seq", "rtt_ms"])
     write(os.path.join(root, "ping_summary.csv"), psumm, ["path", "loss_pct"])
+    prr, prf = pr_reports(root)
+    write(os.path.join(root, "pr_runs.csv"), prr,
+          ["n", "run", "proc", "started", "success", "failure", "pending", "lat_min_ms", "lat_mean_ms", "lat_max_ms"])
+    write(os.path.join(root, "pr_report_flat.csv"), prf, ["n", "run", "key", "value"])
 
 
 if __name__ == "__main__":

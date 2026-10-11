@@ -6,6 +6,9 @@
 #   SCOPE=telco PHASE=idle DURATION=60 OUT=~/bench-results/nested/res ./sampler.sh
 # fiber-company level (server): what the three VMs cost the workload cluster
 #   KUBECTL="kubectl $WKC" PODS_NS=telco SCOPE=fiber PHASE=idle DURATION=60 OUT=$HOME/bench-results/nested/res ./sampler.sh
+# Starting both at the same moment: START_AT=<epoch seconds> makes the sampler wait until then. Pick one time and give it to both:
+#   on the server:  date -d '+3 minutes' +%s        -> e.g. 1791640000
+#   then start BOTH samplers with START_AT=1791640000 (the clocks of the VM and the server agree to within a few seconds)
 set -euo pipefail
 KUBECTL=${KUBECTL:-"sudo k3s kubectl"}
 SCOPE=${SCOPE:?telco|fiber}
@@ -14,6 +17,7 @@ OUT=${OUT:?output dir}
 DURATION=${DURATION:-60}
 INTERVAL=${INTERVAL:-5}
 PODS_NS=${PODS_NS:-}
+START_AT=${START_AT:-}
 mkdir -p "$OUT"
 F="$OUT/res_${SCOPE}_${PHASE}.csv"
 echo "ts,kind,ns,name,cpu_m,mem_mi" > "$F"
@@ -22,6 +26,10 @@ conv='
 function cpu(x){ if (x ~ /m$/) { sub(/m$/,"",x); return x } if (x ~ /n$/) { sub(/n$/,"",x); return x/1000000 } return x*1000 }
 function mem(x){ if (x ~ /Ki$/) { sub(/Ki$/,"",x); return x/1024 } if (x ~ /Gi$/) { sub(/Gi$/,"",x); return x*1024 } sub(/Mi$/,"",x); return x }'
 
+if [ -n "$START_AT" ]; then
+  echo "waiting until epoch $START_AT (now $(date +%s))"
+  while [ "$(date +%s)" -lt "$START_AT" ]; do sleep 1; done
+fi
 end=$((SECONDS + DURATION))
 while [ $SECONDS -lt $end ]; do
   ts=$(date +%s)

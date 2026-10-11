@@ -5,7 +5,7 @@ usage: plot_results.py <results_root> <out_dir> <variant> [<variant> ...]
        plot_results.py ~/bench-results figs nested direct
 
 Needs matplotlib (pip install matplotlib). Missing inputs are skipped, so you can plot with only one variant.
-Figures: ue_latency.png  ue_total.png  throughput.png  rtt.png  resources.png
+Figures: pr_control_plane.png (PacketRusher)  ue_latency.png  ue_attach_percentiles.png  ue_total.png  throughput.png  rtt.png  resources_layers_<variant>.png  resources.png (older, pod sums only)
 """
 import csv, os, statistics, sys
 from collections import defaultdict
@@ -14,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 COLORS = ["#1f77b4", "#d95f02", "#2ca02c", "#7570b3", "#e7298a"]
-PATH_LABEL = {"pod": "pod-to-pod", "ue": "UE via UPF"}
+PATH_LABEL = {"pod": "pod-to-pod", "ue": "UERANSIM UE via UPF", "pr": "PacketRusher UE via UPF"}
 
 
 def read(root, variant, name):
@@ -36,7 +36,7 @@ def save(fig, out, name):
     os.makedirs(out, exist_ok=True)
     p = os.path.join(out, name)
     fig.tight_layout()
-    fig.savefig(p, dpi=200)
+    fig.savefig(p, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print("wrote", p)
 
@@ -85,6 +85,33 @@ def fig_ue(root, out, variants):
     axes[0].legend()
     save(fig, out, "ue_latency.png")
 
+    # attach latency per UE (registration + PDU session set-up): median, p90 and max against N
+    fig, ax = plt.subplots(figsize=(6.4, 4.2))
+    for i, v in enumerate(variants):
+        by = defaultdict(list)
+        for r in rows[v]:
+            a, b = num(r["reg_ms"]), num(r["pdu_ms"])
+            if a is not None and b is not None:
+                by[int(r["n"])].append(a + b)
+        xs = sorted(by)
+        if not xs:
+            continue
+        c = COLORS[i % len(COLORS)]
+        q = lambda vals, f: sorted(vals)[int(f * (len(vals) - 1))]
+        ax.plot(xs, [statistics.median(by[x]) for x in xs], "-o", color=c, label=f"{v}: median")
+        ax.plot(xs, [q(by[x], 0.9) for x in xs], "--s", color=c, label=f"{v}: p90")
+        ax.plot(xs, [max(by[x]) for x in xs], ":^", color=c, label=f"{v}: max")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xticks(ns)
+    ax.set_xticklabels([str(n) for n in ns])
+    ax.set_xlabel("number of UEs started together")
+    ax.set_ylabel("attach latency per UE (ms)")
+    ax.set_title("Registration + PDU session set-up per UE")
+    ax.grid(alpha=0.3, which="both")
+    ax.legend(fontsize=7)
+    save(fig, out, "ue_attach_percentiles.png")
+
     # time until the last UE has its PDU session, per run
     fig, ax = plt.subplots(figsize=(6, 4))
     for i, v in enumerate(variants):
@@ -113,7 +140,7 @@ def fig_throughput(root, out, variants):
     rows = {v: read(root, v, "iperf.csv") for v in variants}
     if not any(rows.values()):
         return
-    series = [(v, p) for v in variants for p in ("pod", "ue")
+    series = [(v, p) for v in variants for p in ("pod", "ue", "pr")
               if any(r["path"] == p for r in rows[v])]
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 
@@ -133,7 +160,7 @@ def fig_throughput(root, out, variants):
     axes[0].set_xticklabels(["TCP, 1 stream", "TCP, 4 streams"])
     axes[0].set_ylabel("Mbit/s")
     axes[0].set_title("TCP throughput (mean, std)")
-    axes[0].legend(fontsize=7)
+    axes[0].legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.1))   # below the axes: the bars use all the space
     axes[0].grid(axis="y", alpha=0.3)
 
     # UDP achieved and loss
@@ -142,7 +169,8 @@ def fig_throughput(root, out, variants):
         ach, loss = [], []
         for o in offered:
             sel = [r for r in rows[v] if r["path"] == p and r["proto"] == "udp" and r["tag"] == f"b{o}M"]
-            a = [num(r["mbps"]) for r in sel if num(r["mbps"]) is not None]
+            # iperf3's UDP client reports the rate it SENT; what arrived is that rate minus the loss the server counted
+            a = [num(r["mbps"]) * (1 - (num(r["loss_pct"]) or 0) / 100) for r in sel if num(r["mbps"]) is not None]
             l = [num(r["loss_pct"]) for r in sel if num(r["loss_pct"]) is not None]
             ach.append(statistics.mean(a) if a else float("nan"))
             loss.append(statistics.mean(l) if l else float("nan"))
@@ -152,8 +180,8 @@ def fig_throughput(root, out, variants):
     if offered:
         axes[1].plot(offered, offered, "k--", lw=0.8, label="ideal")
     axes[1].set_xlabel("offered load (Mbit/s)")
-    axes[1].set_ylabel("achieved (Mbit/s)")
-    axes[1].set_title("UDP achieved throughput")
+    axes[1].set_ylabel("delivered = sent x (1 - loss) (Mbit/s)")
+    axes[1].set_title("UDP delivered throughput")
     axes[1].legend(fontsize=7)
     axes[2].set_xlabel("offered load (Mbit/s)")
     axes[2].set_ylabel("packet loss (%)")
@@ -167,7 +195,7 @@ def fig_rtt(root, out, variants):
     labels, data = [], []
     for v in variants:
         rows = read(root, v, "ping.csv")
-        for p in ("pod", "ue"):
+        for p in ("pod", "ue", "pr"):
             vals = [num(r["rtt_ms"]) for r in rows if r["path"] == p]
             vals = [x for x in vals if x is not None]
             if vals:
@@ -180,7 +208,7 @@ def fig_rtt(root, out, variants):
     ax.set_xticks(range(1, len(data) + 1))
     ax.set_xticklabels(labels)
     for i, box in enumerate(bp["boxes"]):
-        box.set(facecolor=COLORS[(i // 2) % len(COLORS)], alpha=0.6)
+        box.set(facecolor=COLORS[i % len(COLORS)], alpha=0.6)
     ax.set_ylabel("RTT (ms)")
     ax.set_title("Round-trip time to the data-network server")
     ax.grid(axis="y", alpha=0.3)
@@ -209,6 +237,7 @@ def fig_resources(root, out, variants):
                 entries.append((v, scope, phase, statistics.mean(by_ts.values()), statistics.mean(mem_ts.values())))
     if not entries:
         return
+    phases = [ph for ph in phases if any(e[2] == ph for e in entries)]
     series = sorted({(v, s) for v, s, _, _, _ in entries})
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
     width = 0.8 / max(len(series), 1)
@@ -230,6 +259,125 @@ def fig_resources(root, out, variants):
     save(fig, out, "resources.png")
 
 
+def _span(path):
+    ts = [int(r["ts"]) for r in csv.DictReader(open(path)) if r["ts"].isdigit()]
+    return (min(ts), max(ts)) if ts else (None, None)
+
+
+def _means(path, lo=None, hi=None):
+    """mean over samples of: sum of pod rows, sum of node rows -> (pod_cpu, pod_mem, node_cpu, node_mem).
+    Only rows with lo <= ts <= hi are used (the time both samplers were running)."""
+    pod_c, pod_m, node_c, node_m = (defaultdict(float) for _ in range(4))
+    for r in csv.DictReader(open(path)):
+        if not r["ts"].isdigit() or (lo is not None and not lo <= int(r["ts"]) <= hi):
+            continue
+        c, m = num(r["cpu_m"]) or 0, num(r["mem_mi"]) or 0
+        if r["kind"] == "pod":
+            pod_c[r["ts"]] += c
+            pod_m[r["ts"]] += m
+        elif r["kind"] == "node":
+            node_c[r["ts"]] += c
+            node_m[r["ts"]] += m
+    mean = lambda d: statistics.mean(d.values()) if d else 0
+    return mean(pod_c), mean(pod_m), mean(node_c), mean(node_m)
+
+
+def fig_layers(root, out, variants):
+    """The 'three levels' figure, per variant that has both scopes:
+       pods in the telco cluster -> the telco VMs as the guests see them -> virt-launcher pods -> whole workload node."""
+    phases = ["idle", "ue", "iperf"]
+    labels = ["pods in telco cluster", "telco VMs (guest view, node rows)", "virt-launcher pods (fiber view)", "whole workload node"]
+    for v in variants:
+        d = os.path.join(root, v, "res")
+        data = {}
+        for ph in phases:
+            tf, ff = os.path.join(d, f"res_telco_{ph}.csv"), os.path.join(d, f"res_fiber_{ph}.csv")
+            if os.path.exists(tf) and os.path.exists(ff):
+                (a1, b1), (a2, b2) = _span(tf), _span(ff)
+                if a1 is None or a2 is None:
+                    continue
+                lo, hi = max(a1, a2), min(b1, b2)
+                if hi < lo:
+                    print(f"skip {v}/{ph}: the telco and fiber samplers did not overlap in time (clocks or start times)")
+                    continue
+                print(f"{v}/{ph}: using the {hi - lo} s where both samplers ran")
+                tp_c, tp_m, tn_c, tn_m = _means(tf, lo, hi)
+                fp_c, fp_m, fn_c, fn_m = _means(ff, lo, hi)
+                data[ph] = ([tp_c, tn_c, fp_c, fn_c], [tp_m, tn_m, fp_m, fn_m])
+        if not data:
+            continue
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+        shown = [ph for ph in phases if ph in data]
+        width = 0.8 / len(labels)
+        for ax, idx, ylabel, title in ((axes[0], 0, "millicores", "CPU per layer (mean)"),
+                                       (axes[1], 1, "MiB", "memory per layer (mean)")):
+            for i, lab in enumerate(labels):
+                vals = [data[ph][idx][i] for ph in shown]
+                ax.bar([k + (i - (len(labels) - 1) / 2) * width for k in range(len(shown))], vals, width * 0.9,
+                       color=COLORS[i % len(COLORS)], alpha=0.85, label=lab)
+            ax.set_xticks(range(len(shown)))
+            ax.set_xticklabels(shown)
+            ax.set_ylabel(ylabel)
+            ax.set_title(f"{title}: {v}")
+            ax.grid(axis="y", alpha=0.3)
+        axes[0].legend(fontsize=7)
+        save(fig, out, f"resources_layers_{v}.png")
+
+
+def fig_pr(root, out, variants):
+    """PacketRusher control plane: per procedure the mean and max latency of a run against N (the report only holds
+    aggregates per run), and the share of procedures that succeeded."""
+    data = {v: read(root, v, "pr_runs.csv") for v in variants}
+    if not any(data.values()):
+        return
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
+    procs = [("registration", "registration"), ("pdu_session_establishment", "PDU session set-up")]
+    for ax, (proc, title) in zip(axes[:2], procs):
+        for i, v in enumerate(variants):
+            by = defaultdict(lambda: {"mean": [], "max": []})
+            for r in data[v]:
+                if r["proc"] != proc:
+                    continue
+                m, mx = num(r["lat_mean_ms"]), num(r["lat_max_ms"])
+                if m is not None:
+                    by[int(r["n"])]["mean"].append(m)
+                if mx is not None:
+                    by[int(r["n"])]["max"].append(mx)
+            xs = sorted(x for x in by if by[x]["mean"])
+            if not xs:
+                continue
+            c = COLORS[i % len(COLORS)]
+            ax.plot(xs, [statistics.mean(by[x]["mean"]) for x in xs], "-o", color=c, label=f"{v}: mean")
+            ax.plot(xs, [max(by[x]["max"]) for x in xs], ":^", color=c, label=f"{v}: max of the runs")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel("number of UEs")
+        ax.set_ylabel("latency (ms)")
+        ax.set_title(f"PacketRusher: {title} latency")
+        ax.grid(alpha=0.3, which="both")
+        ax.legend(fontsize=7)
+    ax = axes[2]
+    for i, v in enumerate(variants):
+        for j, (proc, title) in enumerate(procs):
+            st, ok = defaultdict(float), defaultdict(float)
+            for r in data[v]:
+                if r["proc"] == proc and num(r["started"]) is not None:
+                    st[int(r["n"])] += num(r["started"])
+                    ok[int(r["n"])] += num(r["success"]) or 0
+            xs = sorted(x for x in st if st[x] > 0)
+            if xs:
+                ax.plot(xs, [100 * ok[x] / st[x] for x in xs], "-o" if j == 0 else "--s",
+                        color=COLORS[i % len(COLORS)], label=f"{v}: {title}")
+    ax.set_xscale("log")
+    ax.set_ylim(-2, 102)
+    ax.set_xlabel("number of UEs")
+    ax.set_ylabel("successful (%)")
+    ax.set_title("PacketRusher: success rate")
+    ax.grid(alpha=0.3, which="both")
+    ax.legend(fontsize=7)
+    save(fig, out, "pr_control_plane.png")
+
+
 def main():
     if len(sys.argv) < 4:
         sys.exit(__doc__)
@@ -238,6 +386,8 @@ def main():
     fig_throughput(root, out, variants)
     fig_rtt(root, out, variants)
     fig_resources(root, out, variants)
+    fig_layers(root, out, variants)
+    fig_pr(root, out, variants)
 
 
 if __name__ == "__main__":

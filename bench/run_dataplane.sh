@@ -17,6 +17,8 @@ OUT=${OUT:?set OUT to the output directory}
 RUNS=${RUNS:-10}
 DURATION=${DURATION:-20}
 PATHS=${PATHS:-"pod ue"}
+UDP_RATES=${UDP_RATES:-"50M 100M 200M"}   # e.g. UDP_RATES="400M 800M" to look for the ceiling
+SKIP_TCP=${SKIP_TCP:-0}                     # SKIP_TCP=1 repeats only the UDP tests
 mkdir -p "$OUT"
 
 SRV=$($KUBECTL -n bench get pod -l app=iperf-server -o jsonpath='{.items[0].status.podIP}')
@@ -30,11 +32,9 @@ $4
 SRV=$SRV
 run() { name=\$1; shift; echo "@@@ \$name"; i=0
   while [ \$i -lt $RUNS ]; do iperf3 -c \$SRV $2 -t $DURATION -J "\$@" || true; i=\$((i+1)); sleep 3; done; }
-run iperf_$1_tcp_P1.json -P 1
-run iperf_$1_tcp_P4.json -P 4
-for b in 50M 100M 200M; do run iperf_$1_udp_b\$b.json -u -b \$b; done
-echo "@@@ ping_$1.txt"
-ping -c 200 -i 0.2 $3 \$SRV
+$( [ "$SKIP_TCP" = 1 ] || printf 'run iperf_%s_tcp_P1.json -P 1\nrun iperf_%s_tcp_P4.json -P 4\n' "$1" "$1" )
+for b in $UDP_RATES; do run iperf_$1_udp_b\$b.json -u -b \$b; done
+$( [ "$SKIP_TCP" = 1 ] || printf 'echo "@@@ ping_%s.txt"\nping -c 200 -i 0.2 %s %s\n' "$1" "$3" '$SRV' )
 INNER
 }
 
@@ -51,7 +51,7 @@ echo "== path: UE (uesimtun0) -> UPF -> server"
 UEPOD=$($KUBECTL -n "$UE_NS" get pods -l "$UE_SELECTOR" -o name | head -1 | sed 's#pod/##')
 [ -n "$UEPOD" ] || { echo "UE pod not found"; exit 1; }
 suite ue '-B $TUNIP --bind-dev uesimtun0' '-I uesimtun0' \
-  'TUNIP=$(ip -4 -o addr show uesimtun0 | awk "{print \$4}" | cut -d/ -f1); echo "tun ip: $TUNIP" >&2' > /tmp/suite_ue.sh
+  'TUNIP=$(ip -4 -o addr show uesimtun0 | awk "{print \$4}" | cut -d/ -f1)' > /tmp/suite_ue.sh
 
 # The suite runs as the COMMAND of an ephemeral container (no stdin/stdout attach, which proved unreliable);
 # its output is read from the container log once it has terminated.
