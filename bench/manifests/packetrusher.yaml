@@ -1,0 +1,122 @@
+# PacketRusher (https://github.com/HewlettPackard/PacketRusher) as a second UE/gNB generator.
+# This is a TEMPLATE, not a file to `kubectl apply` directly: run_packetrusher.sh fills the @...@ placeholders
+# and applies it. One Pod per run:
+#   init container  render-config : writes the real config (pod IP for N2/N3, the AMF's ClusterIP) from the template below
+#   packetrusher                  : the generator; writes its JSON report to /out when it is stopped (SIGINT)
+#   tools (netshoot)              : shares the pod network (sees the UE tunnel interfaces val*) and /out;
+#                                   used for iperf3/ping bound to a UE address and to read the report
+# shareProcessNamespace lets `tools` send the SIGINT that makes PacketRusher write its report.
+# PLMN 999/70, TAC 1, slice SST 1 / SD 111111 and the subscriber keys match the Open5GS values of this repo.
+# The gNB id (000009) differs from UERANSIM's gNB; UEs use IMSI 99970 + msin counting up from 0000000001, the same
+# subscribers UERANSIM uses, so do not run both UE generators at the same time.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: packetrusher-config, namespace: @NS@}
+data:
+  config.yml: |
+    gnodeb:
+      controlif:
+        ip: "@POD_IP@"
+        port: 9487
+      dataif:
+        ip: "@POD_IP@"
+        port: 2152
+      plmnlist:
+        mcc: "999"
+        mnc: "70"
+        tac: "000001"
+        gnbidlength: 24
+        cellid: 0
+        gnbid: "000009"
+      slicesupportlist:
+        sst: "01"
+        sd: "111111"
+    ue:
+      hplmn:
+        mcc: "999"
+        mnc: "70"
+      msin: "0000000001"
+      routingindicator: "0000"
+      protectionScheme: 0
+      homeNetworkPublicKey: "5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650"
+      homeNetworkPublicKeyID: 1
+      pdusessiontype: IPv4
+      tunnelmtu: 1400
+      key: "465B5CE8B199B49FAA5F0A2EE238A6BC"
+      opc: "E8ED289DEBA952E4283B54E88E6183CA"
+      amf: "8000"
+      sqn: "00000000"
+      dnn: "internet"
+      snssai:
+        sst: "01"
+        sd: "111111"
+      integrity:
+        nia0: false
+        nia1: false
+        nia2: true
+        nia3: false
+      ciphering:
+        nea0: true
+        nea1: false
+        nea2: true
+        nea3: false
+    amfif:
+      - ip: "@AMF_IP@"
+        port: 38412
+    logs:
+      level: 4
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: packetrusher
+  namespace: @NS@
+  labels: {app: packetrusher}
+spec:
+  restartPolicy: Never
+  shareProcessNamespace: true
+  terminationGracePeriodSeconds: 5
+  @NODESEL@
+  initContainers:
+    - name: render-config
+      image: docker.io/nicolaka/netshoot:latest
+      command: ["sh", "-c", "sed -e \"s/@POD_IP@/$POD_IP/g\" /tpl/config.yml > /cfg/config.yml && cat /cfg/config.yml | head -12"]
+      env:
+        - name: POD_IP
+          valueFrom: {fieldRef: {fieldPath: status.podIP}}
+      volumeMounts:
+        - {name: tpl, mountPath: /tpl}
+        - {name: cfg, mountPath: /cfg}
+  containers:
+    - name: packetrusher
+      image: @IMAGE@
+      args:
+        - "--report-json"
+        - "/out/report.json"
+        - "--tunnel-backend"
+        - "@BACKEND@"
+        - "multi-ue"
+        - "-n"
+        - "@N@"
+        - "--timeBetweenRegistration"
+        - "@TR@"
+        - "@TUNNEL_LINE@"
+      securityContext:
+        privileged: true        # NET_ADMIN and /dev/net/tun for the tunnel interfaces
+      volumeMounts:
+        - {name: cfg, mountPath: /packetrusher/config}
+        - {name: out, mountPath: /out}
+    - name: tools
+      image: docker.io/nicolaka/netshoot:latest
+      command: ["sleep", "infinity"]
+      securityContext:
+        capabilities: {add: ["NET_ADMIN", "NET_RAW"]}
+      volumeMounts:
+        - {name: out, mountPath: /out}
+  volumes:
+    - name: tpl
+      configMap: {name: packetrusher-config}
+    - name: cfg
+      emptyDir: {}
+    - name: out
+      emptyDir: {}
