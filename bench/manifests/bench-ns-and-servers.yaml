@@ -21,7 +21,7 @@ spec:
       nodeSelector: {telco.example/site: core}
       containers:
         - name: iperf
-          image: docker.io/nicolaka/netshoot:latest
+          image: docker.io/nicolaka/netshoot:v0.16
           command: ["iperf3", "-s"]
           ports: [{containerPort: 5201}]
 ---
@@ -46,5 +46,5 @@ spec:
       nodeSelector: {telco.example/site: edge}
       containers:
         - name: netshoot
-          image: docker.io/nicolaka/netshoot:latest
+          image: docker.io/nicolaka/netshoot:v0.16
           command: ["sleep", "infinity"]

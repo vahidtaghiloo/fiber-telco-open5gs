@@ -56,7 +56,7 @@ suite ue '-B $TUNIP --bind-dev uesimtun0' '-I uesimtun0' \
 # The suite runs as the COMMAND of an ephemeral container (no stdin/stdout attach, which proved unreliable);
 # its output is read from the container log once it has terminated.
 CNAME="bench-ue-$(date +%s)"
-$KUBECTL -n "$UE_NS" debug "$UEPOD" --image=docker.io/nicolaka/netshoot:latest \
+$KUBECTL -n "$UE_NS" debug "$UEPOD" --image=docker.io/nicolaka/netshoot:v0.16 \
   --target="$UE_CONTAINER" --profile=sysadmin -c "$CNAME" -- sh -c "$(cat /tmp/suite_ue.sh)"
 echo "ephemeral container $CNAME started; waiting for the suite to finish"
 LIMIT=$(( 5 * RUNS * (DURATION + 3) + 400 ))

@@ -42,8 +42,10 @@ nssf:
     - uri: ''
       sst: 1
       sd: '0x111111'
+# The WebUI is off in the baseline: its init container uses an image that no longer exists, and in the nested variant a Flux
+# post-render patch replaces it (not available with `helm template`). It is not needed for the benchmarks.
 webui:
-  enabled: true
+  enabled: false
   ingress:
     enabled: false
 populate:

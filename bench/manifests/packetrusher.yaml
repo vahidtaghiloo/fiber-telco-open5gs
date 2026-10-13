@@ -80,7 +80,7 @@ spec:
   @NODESEL@
   initContainers:
     - name: render-config
-      image: docker.io/nicolaka/netshoot:latest
+      image: docker.io/nicolaka/netshoot:v0.16
       command: ["sh", "-c", "sed -e \"s/@POD_IP@/$POD_IP/g\" /tpl/config.yml > /cfg/config.yml && cat /cfg/config.yml | head -12"]
       env:
         - name: POD_IP
@@ -108,7 +108,7 @@ spec:
         - {name: cfg, mountPath: /packetrusher/config}
         - {name: out, mountPath: /out}
     - name: tools
-      image: docker.io/nicolaka/netshoot:latest
+      image: docker.io/nicolaka/netshoot:v0.16
       command: ["sleep", "infinity"]
       securityContext:
         privileged: true        # same security context as packetrusher: a confined container is not allowed to signal a privileged one
