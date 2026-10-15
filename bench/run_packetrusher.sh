@@ -101,6 +101,10 @@ reset_amf() {
   # registers again, copies only the first bytes of the new security capability over the stored one. A UE left by UERANSIM
   # (which advertises E-UTRA capabilities) then makes the AMF replay a longer capability than PacketRusher offered, and
   # PacketRusher rejects the Security Mode Command. Restarting the AMF clears all such contexts.
+  # The UERANSIM UEs must be gone BEFORE the AMF restarts: if they are still running they re-register with the new AMF and
+  # leave exactly the stale contexts this restart is meant to remove (seen in the first direct run, N=1).
+  $K scale deploy/"$UE_DEP" --replicas=0 >/dev/null 2>&1 || true
+  $K wait --for=delete pod -l app.kubernetes.io/component=ues --timeout=90s >/dev/null 2>&1 || true
   [ "$RESET_AMF" = 1 ] || return 0
   echo "-- restarting the AMF ($AMF_DEP) to drop leftover UE contexts (RESET_AMF=0 skips this)"
   $K rollout restart deploy/"$AMF_DEP" >/dev/null && $K rollout status deploy/"$AMF_DEP" --timeout=180s >/dev/null && sleep 10 \

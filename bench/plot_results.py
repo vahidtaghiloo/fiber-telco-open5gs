@@ -12,9 +12,15 @@ from collections import defaultdict
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.text
 
 COLORS = ["#1f77b4", "#d95f02", "#2ca02c", "#7570b3", "#e7298a"]
 PATH_LABEL = {"pod": "pod-to-pod", "ue": "UERANSIM UE via UPF", "pr": "PacketRusher UE via UPF"}
+# data-plane figures: the colour says WHICH PATH, the style says WHICH VARIANT (first variant solid, the others hatched / dashed)
+PATH_COLOR = {"pod": "#8c8c8c", "ue": "#9467bd", "pr": "#2ca02c"}
+PATH_SHORT = {"pod": "pod-to-pod", "ue": "UERANSIM\nUE", "pr": "PacketRusher\nUE"}
+HATCHES = ["", "//", "xx"]
+LINESTYLES = ["-", "--", ":"]
 
 
 def read(root, variant, name):
@@ -35,6 +41,11 @@ def num(v):
 def save(fig, out, name):
     os.makedirs(out, exist_ok=True)
     p = os.path.join(out, name)
+    k = float(os.environ.get("PLOT_FONT_SCALE", "1"))
+    if k != 1:        # report mode: figures are shrunk to the page width, so every text is enlarged beforehand
+        fig.canvas.draw()
+        for t in fig.findobj(matplotlib.text.Text):
+            t.set_fontsize(t.get_fontsize() * k)
     fig.tight_layout()
     fig.savefig(p, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -140,77 +151,75 @@ def fig_throughput(root, out, variants):
     rows = {v: read(root, v, "iperf.csv") for v in variants}
     if not any(rows.values()):
         return
-    series = [(v, p) for v in variants for p in ("pod", "ue", "pr")
-              if any(r["path"] == p for r in rows[v])]
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    paths = [p for p in ("pod", "ue", "pr") if any(r["path"] == p for v in variants for r in rows[v])]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8))
 
-    # TCP bars
+    # TCP: grouped bars (group = 1 or 4 streams, bar = path x variant), LOG axis because pod-to-pod on one node is far faster
     tags = ["P1", "P4"]
+    series = [(p, v) for p in paths for v in variants]
     width = 0.8 / max(len(series), 1)
-    for i, (v, p) in enumerate(series):
+    for i, (p, v) in enumerate(series):
+        vi = variants.index(v)
         means, errs = [], []
         for t in tags:
             vals = [num(r["mbps"]) for r in rows[v] if r["path"] == p and r["proto"] == "tcp" and r["tag"] == t]
             vals = [x for x in vals if x is not None]
             means.append(statistics.mean(vals) if vals else 0)
             errs.append(statistics.pstdev(vals) if len(vals) > 1 else 0)
-        axes[0].bar([k + (i - (len(series) - 1) / 2) * width for k in range(len(tags))], means, width * 0.9,
-                    yerr=errs, capsize=3, color=COLORS[i % len(COLORS)], alpha=0.8, label=f"{v}: {PATH_LABEL[p]}")
+        axes[0].bar([k + (i - (len(series) - 1) / 2) * width for k in range(len(tags))], means, width * 0.92,
+                    yerr=errs, capsize=2, color=PATH_COLOR[p], hatch=HATCHES[vi % len(HATCHES)], edgecolor="white",
+                    alpha=0.9, label=f"{v}: {PATH_LABEL[p]}")
+    axes[0].set_yscale("log")
     axes[0].set_xticks(range(len(tags)))
     axes[0].set_xticklabels(["TCP, 1 stream", "TCP, 4 streams"])
-    axes[0].set_ylabel("Mbit/s")
+    axes[0].set_ylabel("Mbit/s (log scale)")
     axes[0].set_title("TCP throughput (mean, std)")
-    axes[0].legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.1))   # below the axes: the bars use all the space
-    axes[0].grid(axis="y", alpha=0.3)
+    axes[0].grid(axis="y", alpha=0.3, which="both")
+    axes[0].legend(fontsize=9, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2)
 
-    # UDP achieved and loss
+    # UDP loss
     offered = sorted({int(r["tag"][1:-1]) for v in variants for r in rows[v] if r["proto"] == "udp"})
-    for i, (v, p) in enumerate(series):
-        ach, loss = [], []
-        for o in offered:
-            sel = [r for r in rows[v] if r["path"] == p and r["proto"] == "udp" and r["tag"] == f"b{o}M"]
-            # iperf3's UDP client reports the rate it SENT; what arrived is that rate minus the loss the server counted
-            a = [num(r["mbps"]) * (1 - (num(r["loss_pct"]) or 0) / 100) for r in sel if num(r["mbps"]) is not None]
-            l = [num(r["loss_pct"]) for r in sel if num(r["loss_pct"]) is not None]
-            ach.append(statistics.mean(a) if a else float("nan"))
-            loss.append(statistics.mean(l) if l else float("nan"))
-        c = COLORS[i % len(COLORS)]
-        axes[1].plot(offered, ach, marker="o", color=c, label=f"{v}: {PATH_LABEL[p]}")
-        axes[2].plot(offered, loss, marker="o", color=c, label=f"{v}: {PATH_LABEL[p]}")
-    if offered:
-        axes[1].plot(offered, offered, "k--", lw=0.8, label="ideal")
+    for p in paths:
+        for vi, v in enumerate(variants):
+            loss = []
+            for o in offered:
+                sel = [num(r["loss_pct"]) for r in rows[v]
+                       if r["path"] == p and r["proto"] == "udp" and r["tag"] == f"b{o}M" and num(r["loss_pct"]) is not None]
+                loss.append(statistics.mean(sel) if sel else float("nan"))
+            axes[1].plot(offered, loss, marker="o", color=PATH_COLOR[p], linestyle=LINESTYLES[vi % len(LINESTYLES)],
+                         label=f"{v}: {PATH_LABEL[p]}")
     axes[1].set_xlabel("offered load (Mbit/s)")
-    axes[1].set_ylabel("delivered = sent x (1 - loss) (Mbit/s)")
-    axes[1].set_title("UDP delivered throughput")
-    axes[1].legend(fontsize=7)
-    axes[2].set_xlabel("offered load (Mbit/s)")
-    axes[2].set_ylabel("packet loss (%)")
-    axes[2].set_title("UDP packet loss")
-    for a in axes[1:]:
-        a.grid(alpha=0.3)
+    axes[1].set_ylabel("packet loss (%)")
+    axes[1].set_title("UDP packet loss")
+    axes[1].grid(alpha=0.3)
+    axes[1].legend(fontsize=9, loc="upper left")
     save(fig, out, "throughput.png")
 
 
 def fig_rtt(root, out, variants):
-    labels, data = [], []
-    for v in variants:
+    labels, data, colors, hatches = [], [], [], []
+    for vi, v in enumerate(variants):
         rows = read(root, v, "ping.csv")
         for p in ("pod", "ue", "pr"):
             vals = [num(r["rtt_ms"]) for r in rows if r["path"] == p]
             vals = [x for x in vals if x is not None]
             if vals:
-                labels.append(f"{v}\n{PATH_LABEL[p]}")
+                labels.append(f"{v}\n{PATH_SHORT[p]}")
                 data.append(vals)
+                colors.append(PATH_COLOR[p])
+                hatches.append(HATCHES[vi % len(HATCHES)])
     if not data:
         return
-    fig, ax = plt.subplots(figsize=(1.6 * len(data) + 2, 4))
+    fig, ax = plt.subplots(figsize=(1.35 * len(data) + 1.5, 4.6))
     bp = ax.boxplot(data, patch_artist=True, showfliers=False)
     ax.set_xticks(range(1, len(data) + 1))
-    ax.set_xticklabels(labels)
-    for i, box in enumerate(bp["boxes"]):
-        box.set(facecolor=COLORS[i % len(COLORS)], alpha=0.6)
+    ax.set_xticklabels(labels, fontsize=9)
+    for box, c, h in zip(bp["boxes"], colors, hatches):
+        box.set(facecolor=c, alpha=0.75, hatch=h)
+    for med in bp["medians"]:
+        med.set(color="black", linewidth=1.5)
     ax.set_ylabel("RTT (ms)")
-    ax.set_title("Round-trip time to the data-network server")
+    ax.set_title("Round-trip time to the data-network server (200 echoes per box)")
     ax.grid(axis="y", alpha=0.3)
     save(fig, out, "rtt.png")
 
@@ -306,7 +315,7 @@ def fig_layers(root, out, variants):
                 data[ph] = ([tp_c, tn_c, fp_c, fn_c], [tp_m, tn_m, fp_m, fn_m])
         if not data:
             continue
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4.4))
         shown = [ph for ph in phases if ph in data]
         width = 0.8 / len(labels)
         for ax, idx, ylabel, title in ((axes[0], 0, "millicores", "CPU per layer (mean)"),
@@ -320,7 +329,7 @@ def fig_layers(root, out, variants):
             ax.set_ylabel(ylabel)
             ax.set_title(f"{title}: {v}")
             ax.grid(axis="y", alpha=0.3)
-        axes[0].legend(fontsize=7)
+        axes[0].legend(fontsize=9, loc="upper center", bbox_to_anchor=(1.1, -0.1), ncol=2)   # below the axes, spanning both panels
         save(fig, out, f"resources_layers_{v}.png")
 
 
@@ -330,7 +339,9 @@ def fig_pr(root, out, variants):
     data = {v: read(root, v, "pr_runs.csv") for v in variants}
     if not any(data.values()):
         return
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
+    fig = plt.figure(figsize=(11, 8.2))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.25, 1])
+    axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[1, :])]
     procs = [("registration", "registration"), ("pdu_session_establishment", "PDU session set-up")]
     for ax, (proc, title) in zip(axes[:2], procs):
         for i, v in enumerate(variants):
@@ -369,9 +380,12 @@ def fig_pr(root, out, variants):
                 ax.plot(xs, [100 * ok[x] / st[x] for x in xs], "-o" if j == 0 else "--s",
                         color=COLORS[i % len(COLORS)], label=f"{v}: {title}")
     ax.set_xscale("log")
-    ax.set_ylim(-2, 102)
+    lines = [y for ln in ax.get_lines() for y in ln.get_ydata()]
+    lo = min(lines) if lines else 90
+    ax.set_ylim(max(0, min(lo, 99) - 2), 100.5)      # zoomed: everything is close to 100%
+    ax.axhline(100, color="gray", lw=0.6)
     ax.set_xlabel("number of UEs")
-    ax.set_ylabel("successful (%)")
+    ax.set_ylabel("successful (%), zoomed axis")
     ax.set_title("PacketRusher: success rate")
     ax.grid(alpha=0.3, which="both")
     ax.legend(fontsize=7)
