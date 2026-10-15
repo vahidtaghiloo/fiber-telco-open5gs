@@ -1,0 +1,4 @@
+# bench-v2 / profile FIXED for the UERANSIM generator (edge group: UPF 2 CPU + generators 2 CPU / 4 GiB).
+resources:      {requests: {cpu: "500m", memory: 512Mi}, limits: {cpu: "500m", memory: 512Mi}}   # gNB
+ues:
+  resources:    {requests: {cpu: "1500m", memory: 3Gi},   limits: {cpu: "1500m", memory: 3Gi}}   # UE simulator

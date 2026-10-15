@@ -1,0 +1,5 @@
+# bench-v2: layered AFTER tenant-gitops/clusters/telco/values/open5gs-values.yaml for the nested variant.
+# The pilot's direct variant had no WebUI (its init image no longer exists and the Flux post-render patch is not available
+# with `helm template`); the nested variant must match it. It is not needed for the benchmarks.
+webui:
+  enabled: false
