@@ -2,7 +2,7 @@
 # requests == limits  ->  QoS class Guaranteed, so a pod can neither burst above its budget nor be starved.
 # Layer it on top of the normal values:   helm template ... -f <base values> -f values/resources-fixed.yaml
 #
-# Budget (see ../README.md section 4):
+# Budget (see ../README.md section 4); the VM sizes are those of the pilot run:
 #   core group  8 CPU / 12 GiB  (= the telco-core VM)   sum of pod limits below: 8.0 CPU / 9.0 GiB, 3 GiB left for guest OS + k3s
 #   edge group  4 CPU /  8 GiB  (= the telco-edge VM)   UPF 2 CPU / 2 GiB, generator pods 2 CPU / 4 GiB (see ueransim values, PacketRusher template)
 # The nested control-plane VM (2 CPU / 4 GiB, k3s server only) has no counterpart in direct; it is reported as a separate overhead line.

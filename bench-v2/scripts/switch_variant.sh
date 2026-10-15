@@ -6,6 +6,8 @@
 # Run on the server:   KUBECTL="kubectl $WKC" ./switch_variant.sh direct
 # The replica counts of the direct namespace are remembered in $STATE (so a UERANSIM deployment that was at 0 stays at 0).
 # After `nested` the pods inside the telco cluster restart on their own; wait until telco-cp shows them Running (see EXPERIMENTS.md E0).
+# WARNING: Flux reconciles the telco VMs from Git (unit telco-cluster-vms, prune: true) and would set runStrategy back to Always.
+# Suspend that unit first (bench-v2/README.md section 5.3) or this script has no lasting effect.
 set -euo pipefail
 TARGET=${1:?nested | direct | none}
 KUBECTL=${KUBECTL:-kubectl}

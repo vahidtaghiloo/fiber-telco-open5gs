@@ -104,7 +104,7 @@ stringData:
           export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
           until k3s kubectl get ns >/dev/null 2>&1; do sleep 3; done
           # Calico (Tigera operator), the same CNI as the Sylva workload cluster. VXLAN over net1 (the rented VLAN 300 slice).
-          k3s kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.3/manifests/tigera-operator.yaml
+          k3s kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.32.0/manifests/tigera-operator.yaml
           until k3s kubectl get crd installations.operator.tigera.io >/dev/null 2>&1; do sleep 3; done
           sleep 10
           cat <<'EOF3' | k3s kubectl apply -f -
@@ -115,6 +115,9 @@ stringData:
             calicoNetwork:
               containerIPForwarding: Enabled
               bgp: Disabled
+              hostPorts: Enabled
+              mtu: 1450
+              linuxDataplane: Iptables
               ipPools:
               - {cidr: 10.42.0.0/16, encapsulation: VXLAN, natOutgoing: Enabled, nodeSelector: all()}
               nodeAddressAutodetectionV4: {cidrs: ["10.20.0.0/24"]}
@@ -269,6 +272,8 @@ kind: VirtualMachine
 metadata:
   name: telco-cp
   namespace: telco
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
   labels:
     fiber.example/tenant: telco
     fiber.example/role: k3s-server
@@ -331,6 +336,8 @@ kind: VirtualMachine
 metadata:
   name: telco-core
   namespace: telco
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
   labels:
     fiber.example/tenant: telco
     fiber.example/role: k3s-agent-core
@@ -393,6 +400,8 @@ kind: VirtualMachine
 metadata:
   name: telco-edge
   namespace: telco
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
   labels:
     fiber.example/tenant: telco
     fiber.example/role: k3s-agent-edge
