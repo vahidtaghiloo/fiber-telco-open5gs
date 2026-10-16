@@ -1,4 +1,4 @@
-# bench-v2 copy of tenant-gitops/clusters/telco/values/open5gs-values.yaml (nested variant). Only change: WebUI off.
+# bench-v2 copy of tenant-gitops/clusters/telco/values/open5gs-values.yaml (nested variant). Changes: WebUI off; BSF pinned to the core site.
 # Open5GS 5G SA core (gradiant/open5gs 2.2.6, Open5GS 2.7.2), PLMN 999/70.
 hss: {enabled: false}
 mme: {enabled: false}
@@ -64,5 +64,7 @@ udm:
   nodeSelector: {telco.example/site: core}
 udr:
   nodeSelector: {telco.example/site: core}
+bsf:
+  nodeSelector: {telco.example/site: core}   # bench-v2: missing in the pilot's values, so the BSF landed on the edge VM
 upf:
   nodeSelector: {telco.example/site: edge}

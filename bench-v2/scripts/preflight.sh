@@ -36,6 +36,7 @@ sec() { printf '\n===== %s =====\n' "$1"; }
     sec "Open5GS pods with QoS class and limits"
     $KUBECTL -n open5gs get pods -o custom-columns='POD:.metadata.name,QOS:.status.qosClass,CPU_LIM:.spec.containers[0].resources.limits.cpu,MEM_LIM:.spec.containers[0].resources.limits.memory,NODE:.spec.nodeName' 2>&1
   fi
-  sec "helm / chart versions"; helm list -A 2>&1 | head
+  sec "descheduler (it could evict benchmark pods during a run)"
+  $KUBECTL get deploy,cronjob -A 2>/dev/null | grep -i desched || echo "no descheduler in this cluster"
 } 2>&1 | tee "$F"
 echo; echo "saved $F"
