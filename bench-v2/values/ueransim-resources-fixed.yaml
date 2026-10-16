@@ -1,4 +1,5 @@
-# bench-v2 / profile FIXED for the UERANSIM generator (edge group 4 CPU: UPF 2 + generators 2 CPU / 4 GiB).
-resources:      {requests: {cpu: "500m",  memory: 512Mi}, limits: {cpu: "500m",  memory: 512Mi}}   # gNB
+# bench-v2 / profile FIXED for the UERANSIM generator: 1.5 CPU / 3.5 GiB in total, the same budget as the PacketRusher pod
+# (README section 4). Only one generator runs at a time.
+resources:      {requests: {cpu: "375m",  memory: 512Mi}, limits: {cpu: "375m",  memory: 512Mi}}   # gNB
 ues:
-  resources:    {requests: {cpu: "1500m", memory: 3Gi},   limits: {cpu: "1500m", memory: 3Gi}}   # UE simulator
+  resources:    {requests: {cpu: "1125m", memory: 3Gi},   limits: {cpu: "1125m", memory: 3Gi}}   # UE simulator

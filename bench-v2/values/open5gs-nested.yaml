@@ -1,0 +1,68 @@
+# bench-v2 copy of tenant-gitops/clusters/telco/values/open5gs-values.yaml (nested variant). Only change: WebUI off.
+# Open5GS 5G SA core (gradiant/open5gs 2.2.6, Open5GS 2.7.2), PLMN 999/70.
+hss: {enabled: false}
+mme: {enabled: false}
+pcrf: {enabled: false}
+sgwc: {enabled: false}
+sgwu: {enabled: false}
+smf:
+  nodeSelector: {telco.example/site: core}
+  config:
+    pcrf: {enabled: false}
+
+amf:
+  nodeSelector: {telco.example/site: core}
+  config:
+    guamiList:
+      - plmn_id: {mcc: "999", mnc: "70"}
+        amf_id: {region: 2, set: 1}
+    taiList:
+      - plmn_id: {mcc: "999", mnc: "70"}
+        tac: [1]
+    plmnList:
+      - plmn_id: {mcc: "999", mnc: "70"}
+        s_nssai:
+          - {sst: 1, sd: "0x111111"}
+
+nssf:
+  nodeSelector: {telco.example/site: core}
+  config:
+    nsiList:
+      - {uri: "", sst: 1, sd: "0x111111"}
+
+# bench-v2: WebUI OFF, as in the direct variant (not needed for the benchmarks; without Flux its init image cannot be patched).
+webui:
+  enabled: false
+  nodeSelector: {telco.example/site: core}
+  ingress:
+    enabled: false
+
+populate:
+  enabled: true
+  initCommands:
+    - open5gs-dbctl add_ue_with_slice 999700000000001 465B5CE8B199B49FAA5F0A2EE238A6BC E8ED289DEBA952E4283B54E88E6183CA internet 1 111111
+    - open5gs-dbctl add_ue_with_slice 999700000000002 465B5CE8B199B49FAA5F0A2EE238A6BC E8ED289DEBA952E4283B54E88E6183CA internet 1 111111
+
+# bitnami/mongodb tags were retired; bitnamilegacy still serves this one.
+mongodb:
+  nodeSelector: {telco.example/site: core}
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/mongodb
+    tag: 5.0.10-debian-11-r3
+
+# Placement: control-plane NFs and the database at the core site, the user plane at the edge.
+ausf:
+  nodeSelector: {telco.example/site: core}
+nrf:
+  nodeSelector: {telco.example/site: core}
+pcf:
+  nodeSelector: {telco.example/site: core}
+scp:
+  nodeSelector: {telco.example/site: core}
+udm:
+  nodeSelector: {telco.example/site: core}
+udr:
+  nodeSelector: {telco.example/site: core}
+upf:
+  nodeSelector: {telco.example/site: edge}

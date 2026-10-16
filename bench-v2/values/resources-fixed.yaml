@@ -1,20 +1,21 @@
 # bench-v2 / profile FIXED: identical pod CPU + memory for BOTH variants (nested and direct).
 # requests == limits  ->  QoS class Guaranteed, so a pod can neither burst above its budget nor be starved.
-# Layer it on top of the normal values:   helm template ... -f <base values> -f values/resources-fixed.yaml
+# Layer it on top of the variant's values:   helm template ... -f values/open5gs-<variant>.yaml -f values/resources-fixed.yaml
 #
-# Budget (see ../README.md section 4); the VM sizes are those of the pilot run:
-#   core group  8 CPU / 12 GiB  (= the telco-core VM)   sum of pod limits below: 8.0 CPU / 9.0 GiB, 3 GiB left for guest OS + k3s
-#   edge group  4 CPU /  8 GiB  (= the telco-edge VM)   UPF 2 CPU / 2 GiB, generator pods 2 CPU / 4 GiB (see ueransim values, PacketRusher template)
-# The nested control-plane VM (2 CPU / 4 GiB, k3s server only) has no counterpart in direct; it is reported as a separate overhead line.
-mongodb:  {resources: {requests: {cpu: "2",    memory: 3Gi},   limits: {cpu: "2",    memory: 3Gi}}}
-amf:      {resources: {requests: {cpu: "1",    memory: 1Gi},   limits: {cpu: "1",    memory: 1Gi}}}
-smf:      {resources: {requests: {cpu: "1",    memory: 1Gi},   limits: {cpu: "1",    memory: 1Gi}}}
-scp:      {resources: {requests: {cpu: "1",    memory: 1Gi},   limits: {cpu: "1",    memory: 1Gi}}}
-nrf:      {resources: {requests: {cpu: "500m", memory: 512Mi}, limits: {cpu: "500m", memory: 512Mi}}}
-udm:      {resources: {requests: {cpu: "500m", memory: 512Mi}, limits: {cpu: "500m", memory: 512Mi}}}
-udr:      {resources: {requests: {cpu: "500m", memory: 512Mi}, limits: {cpu: "500m", memory: 512Mi}}}
-ausf:     {resources: {requests: {cpu: "500m", memory: 512Mi}, limits: {cpu: "500m", memory: 512Mi}}}
-pcf:      {resources: {requests: {cpu: "500m", memory: 512Mi}, limits: {cpu: "500m", memory: 512Mi}}}
-nssf:     {resources: {requests: {cpu: "250m", memory: 256Mi}, limits: {cpu: "250m", memory: 256Mi}}}
-bsf:      {resources: {requests: {cpu: "250m", memory: 256Mi}, limits: {cpu: "250m", memory: 256Mi}}}
-upf:      {resources: {requests: {cpu: "2",    memory: 2Gi},   limits: {cpu: "2",    memory: 2Gi}}}
+# Budget (README section 4). In nested the pods run in VMs of 8 vCPU (core) and 4 vCPU (edge); the pods get 1 vCPU LESS than the VM,
+# because the guest OS, k3s, Calico and CoreDNS also need CPU, and a Guaranteed pod cannot be scheduled if the requests on a node
+# add up to more than its CPUs. The direct pods get exactly the same limits.
+#   core  7.0 CPU / 9.0 GiB of pods   (VM telco-core: 8 vCPU / 12 GiB)
+#   edge  UPF 1.5 CPU / 2 GiB + generator 1.5 CPU / 4 GiB = 3.0 CPU / 6 GiB of pods   (VM telco-edge: 4 vCPU / 8 GiB)
+mongodb:  {resources: {requests: {cpu: "1500m", memory: 3Gi},   limits: {cpu: "1500m", memory: 3Gi}}}
+amf:      {resources: {requests: {cpu: "1",     memory: 1Gi},   limits: {cpu: "1",     memory: 1Gi}}}
+smf:      {resources: {requests: {cpu: "1",     memory: 1Gi},   limits: {cpu: "1",     memory: 1Gi}}}
+scp:      {resources: {requests: {cpu: "750m",  memory: 1Gi},   limits: {cpu: "750m",  memory: 1Gi}}}
+udm:      {resources: {requests: {cpu: "500m",  memory: 512Mi}, limits: {cpu: "500m",  memory: 512Mi}}}
+udr:      {resources: {requests: {cpu: "500m",  memory: 512Mi}, limits: {cpu: "500m",  memory: 512Mi}}}
+ausf:     {resources: {requests: {cpu: "500m",  memory: 512Mi}, limits: {cpu: "500m",  memory: 512Mi}}}
+pcf:      {resources: {requests: {cpu: "500m",  memory: 512Mi}, limits: {cpu: "500m",  memory: 512Mi}}}
+nrf:      {resources: {requests: {cpu: "250m",  memory: 512Mi}, limits: {cpu: "250m",  memory: 512Mi}}}
+nssf:     {resources: {requests: {cpu: "250m",  memory: 256Mi}, limits: {cpu: "250m",  memory: 256Mi}}}
+bsf:      {resources: {requests: {cpu: "250m",  memory: 256Mi}, limits: {cpu: "250m",  memory: 256Mi}}}
+upf:      {resources: {requests: {cpu: "1500m", memory: 2Gi},   limits: {cpu: "1500m", memory: 2Gi}}}

@@ -1,5 +1,5 @@
 # bench-v2 / profile BURST (experiment E5, "use idle resources"): small guaranteed share, large ceiling.
-# Requests are a quarter of FIXED; limits are well above FIXED (large NFs 4 CPU, small NFs 1-2 CPU, UPF 4 CPU) so that idle CPU can be borrowed.
+# Small requests (about a quarter of FIXED) and limits well above FIXED (large NFs 4 CPU, small NFs 1-2 CPU, UPF 4 CPU), so that idle CPU can be borrowed.
 # Only meaningful for `direct`: a VM cannot lend its idle vCPUs to the other VM. Run nested with FIXED.
 mongodb:  {resources: {requests: {cpu: "500m", memory: 768Mi}, limits: {cpu: "4",    memory: 6Gi}}}
 amf:      {resources: {requests: {cpu: "250m", memory: 256Mi}, limits: {cpu: "4",    memory: 2Gi}}}
