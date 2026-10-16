@@ -59,7 +59,7 @@ flux = (f"{I}k3s kubectl apply -f https://github.com/fluxcd/flux2/releases/downl
         f"{I}k3s kubectl apply -f /root/flux-sync.yaml\n")
 out = sub(out, flux, f"{I}# (no Flux in bench-v2: Open5GS is deployed with helm template, as in the direct variant)\n", 1)
 
-# Flux must create the VMs but never change them again (switch_variant.sh halts and starts them, which Flux would see as drift)
+# Flux creates the VMs but never changes them again (protects manual changes to the VMs)
 for vm in ("telco-cp", "telco-core", "telco-edge"):
     out = sub(out, f"kind: VirtualMachine\nmetadata:\n  name: {vm}\n  namespace: telco\n",
               f"kind: VirtualMachine\nmetadata:\n  name: {vm}\n  namespace: telco\n  annotations:\n    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent\n", 1)
