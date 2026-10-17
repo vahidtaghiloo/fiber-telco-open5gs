@@ -1,0 +1,17 @@
+# bench-v2: restart every Open5GS component by stopping the old pod BEFORE starting the new one ("Recreate").
+# Why: the default RollingUpdate starts the new pod first and needs room for two copies at once. In nested the core pods
+# already reserve 7.0 of telco-core's 8 vCPU, so a second AMF (1 CPU) stays Pending and the restart never completes
+# (seen 2026-10-17: the AMF restart timed out, the old AMF kept stale UE contexts, PacketRusher failed at Security Mode).
+# Used in BOTH variants, so they stay identical. Layer it after the other values files.
+amf:     {updateStrategy: {type: Recreate}}
+ausf:    {updateStrategy: {type: Recreate}}
+bsf:     {updateStrategy: {type: Recreate}}
+nrf:     {updateStrategy: {type: Recreate}}
+nssf:    {updateStrategy: {type: Recreate}}
+pcf:     {updateStrategy: {type: Recreate}}
+scp:     {updateStrategy: {type: Recreate}}
+smf:     {updateStrategy: {type: Recreate}}
+udm:     {updateStrategy: {type: Recreate}}
+udr:     {updateStrategy: {type: Recreate}}
+upf:     {updateStrategy: {type: Recreate}}
+mongodb: {updateStrategy: {type: Recreate}}
