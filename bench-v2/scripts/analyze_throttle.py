@@ -27,7 +27,7 @@ COLOR = {"nested": "#1f77b4", "direct": "#d95f02"}
 # limits from values/resources-fixed.yaml, values/ueransim-resources-fixed.yaml, scripts/manifests/packetrusher.yaml
 LIMIT = {"open5gs-amf": 1.0, "open5gs-smf": 1.0, "mongodb": 1.5, "open5gs-scp": 0.75, "open5gs-udm": 0.5, "open5gs-udr": 0.5,
          "open5gs-ausf": 0.5, "open5gs-pcf": 0.5, "open5gs-nrf": 0.25, "open5gs-nssf": 0.25, "open5gs-bsf": 0.25,
-         "open5gs-upf": 1.5, "packetrusher": 1.25, "tools": 0.25}
+         "open5gs-upf": 1.5, "packetrusher": 1.25, "tools": 0.25, "gnodeb": 0.375}
 for d in ("figs", "tables"):
     os.makedirs(os.path.join(OUT, d), exist_ok=True)
 
