@@ -7,7 +7,8 @@
 #   scaling    control plane: N UEs registering at a controlled pace, REPS times per N;
 #              saves each run's JSON report and log:  $OUT/pr_N<nnn>_r<rr>.json / .log
 #   dataplane  one UE with a tunnel; iperf3 and ping bound to its address (path name "pr"):
-#              $OUT/iperf_pr_<proto>_<tag>.json and $OUT/ping_pr.txt
+#              $OUT/iperf_pr_<proto>_<tag>.json and $OUT/ping_pr.txt; PATHS="pod pr" adds the same tests from the same
+#              container over the pod network only (path "pod", no 5G): $OUT/iperf_pod_*.json, $OUT/ping_pod.txt
 #
 # usage (telco-cp):
 #   OUT=~/bench-results/nested/pr ./run_packetrusher.sh smoke
@@ -37,6 +38,8 @@ RUNS=${RUNS:-10}
 DURATION=${DURATION:-20}
 UDP_RATES=${UDP_RATES:-"50M 100M 200M"}
 SKIP_TCP=${SKIP_TCP:-0}
+PATHS=${PATHS:-pr}                      # dataplane: "pr" = bound to the UE address (tunnel -> UPF -> server); "pod" = same container, pod network only (no 5G)
+PING_COUNT=${PING_COUNT:-200}
 TPL="$(cd "$(dirname "$0")" && pwd)/manifests/packetrusher.yaml"
 mkdir -p "$OUT"
 K="$KUBECTL -n $NS"
@@ -164,19 +167,26 @@ dataplane)
   echo "iperf3 server pod IP: $SRV"
   {
     echo "SRV=$SRV; UEIP=$UEIP"
-    echo 'run() { name=$1; shift; echo "@@@ $name"; i=0'
-    echo "  while [ \$i -lt $RUNS ]; do iperf3 -c \$SRV -B \$UEIP -t $DURATION -J \"\$@\" || true; i=\$((i+1)); sleep 3; done; }"
-    [ "$SKIP_TCP" = 1 ] || { echo 'run iperf_pr_tcp_P1.json -P 1'; echo 'run iperf_pr_tcp_P4.json -P 4'; }
-    echo "for b in $UDP_RATES; do run iperf_pr_udp_b\$b.json -u -b \$b; done"
-    [ "$SKIP_TCP" = 1 ] || { echo 'echo "@@@ ping_pr.txt"'; echo 'ping -c 200 -i 0.2 -I $UEIP $SRV'; }
+    echo 'run() { name=$1; bind=$2; shift 2; echo "@@@ $name"; i=0'
+    echo "  while [ \$i -lt $RUNS ]; do iperf3 -c \$SRV \$bind -t $DURATION -J \"\$@\" || true; i=\$((i+1)); sleep 3; done; }"
+    for p in $PATHS; do
+      if [ "$p" = pr ]; then bind='-B $UEIP'; pif='-I $UEIP'; else bind=''; pif=''; fi
+      [ "$SKIP_TCP" = 1 ] || { echo "run iperf_${p}_tcp_P1.json \"$bind\" -P 1"; echo "run iperf_${p}_tcp_P4.json \"$bind\" -P 4"; }
+      echo "for b in $UDP_RATES; do run iperf_${p}_udp_b\$b.json \"$bind\" -u -b \$b; done"
+      [ "$SKIP_TCP" = 1 ] || { echo "echo \"@@@ ping_${p}.txt\""; echo "ping -c $PING_COUNT -i 0.2 $pif \$SRV"; }
+    done
   } > /tmp/suite_pr.sh
   $K exec -i packetrusher -c tools -- sh -s < /tmp/suite_pr.sh | awk -v out="$OUT" '/^@@@ /{f=$2; next} f{print > (out "/" f)}'
   stop_run; collect pr_dataplane_run
   cleanup
   ls -l "$OUT"
   bad=0
-  n=$(ls "$OUT"/iperf_pr_*.json 2>/dev/null | wc -l)
-  [ "$SKIP_TCP" = 1 ] || { [ "$n" -ge 5 ] || { echo "WARNING: only $n iperf_pr files (expected 5)"; bad=1; }; [ -s "$OUT/ping_pr.txt" ] || { echo "WARNING: no ping_pr.txt"; bad=1; }; }
+  expected=$(( $(echo $UDP_RATES | wc -w) + (SKIP_TCP == 1 ? 0 : 2) ))
+  for p in $PATHS; do
+    n=$(ls "$OUT"/iperf_${p}_*.json 2>/dev/null | wc -l)
+    [ "$n" -ge "$expected" ] || { echo "WARNING: only $n iperf_${p} files (expected $expected)"; bad=1; }
+    [ "$SKIP_TCP" = 1 ] || [ -s "$OUT/ping_${p}.txt" ] || { echo "WARNING: no ping_${p}.txt"; bad=1; }
+  done
   [ "$bad" = 0 ] && echo "OK: the PacketRusher data-plane files are present" || { echo "INCOMPLETE: see the warnings above"; exit 1; }
   ;;
 *) echo "unknown mode '$MODE' (smoke | scaling | dataplane)"; exit 2 ;;

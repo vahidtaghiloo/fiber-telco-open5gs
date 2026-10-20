@@ -1,0 +1,24 @@
+# bench-v2 E2: iperf3 server for the DIRECT variant, applied on the Sylva workload cluster (server).
+# 1 CPU / 512 MiB, Guaranteed, the same as in nested (e2-iperf-server-nested.yaml); no nodeSelector (one node).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bench
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: iperf-server, namespace: bench}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: iperf-server}}
+  template:
+    metadata: {labels: {app: iperf-server}}
+    spec:
+      containers:
+        - name: iperf
+          image: docker.io/nicolaka/netshoot:v0.16
+          command: ["iperf3", "-s"]
+          ports: [{containerPort: 5201}]
+          resources: {requests: {cpu: "1", memory: 512Mi}, limits: {cpu: "1", memory: 512Mi}}

@@ -9,7 +9,7 @@
 set -uo pipefail
 KUBECTL=${KUBECTL:-"sudo k3s kubectl"}
 NODES=${NODES:?set NODES to the node name(s) to sample}
-NS=${NS:?set NS to the namespace}
+NS=${NS:?set NS to the namespace}        # an exact name, or several separated by | (e.g. "open5gs|bench")
 OUT=${OUT:?set OUT to the output directory}
 TAG=${TAG:-sample}
 INTERVAL=${INTERVAL:-5}
@@ -25,11 +25,11 @@ while [ $SECONDS -lt $end ]; do
     $KUBECTL get --raw "/api/v1/nodes/$node/proxy/metrics/cadvisor" 2>/dev/null | awk -v ts="$ts" -v node="$node" -v ns="$NS" '
       function lab(s, k) { if (match(s, "[{,]" k "=\"[^\"]*\"")) return substr(s, RSTART + length(k) + 3, RLENGTH - length(k) - 4); return "" }
       /^container_(cpu_usage_seconds_total|cpu_cfs_periods_total|cpu_cfs_throttled_periods_total|cpu_cfs_throttled_seconds_total|memory_working_set_bytes)\{/ {
-        if (lab($0, "namespace") != ns) next
+        n = lab($0, "namespace"); if (n !~ ("^(" ns ")$")) next
         c = lab($0, "container"); if (c == "" || c == "POD") next
         name = substr($0, 1, index($0, "{") - 1)
         rest = substr($0, index($0, "} ") + 2); split(rest, a, " ")
-        print ts "," node "," ns "," lab($0, "pod") "," c "," name "," a[1]
+        print ts "," node "," n "," lab($0, "pod") "," c "," name "," a[1]
       }' >> "$F"
   done
   n=$((n + 1))

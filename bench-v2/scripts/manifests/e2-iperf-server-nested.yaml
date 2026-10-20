@@ -1,0 +1,30 @@
+# bench-v2 E2: iperf3 server for the NESTED variant, applied inside the telco k3s cluster (telco-cp).
+# 1 CPU / 512 MiB, Guaranteed, the same as in direct (e2-iperf-server-direct.yaml).
+# It runs on telco-cp: telco-core (0.5 vCPU spare) and telco-edge (0.5 vCPU spare) have no room for it (README section 4),
+# telco-cp has 2 vCPU and no pods. Like the core VM, it is a different VM from the UPF, so the traffic crosses between VMs.
+# telco-cp carries the k3s taint CriticalAddonsOnly=true:NoExecute, hence the toleration.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bench
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: iperf-server, namespace: bench}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: iperf-server}}
+  template:
+    metadata: {labels: {app: iperf-server}}
+    spec:
+      nodeSelector: {kubernetes.io/hostname: telco-cp}
+      tolerations:
+        - {key: CriticalAddonsOnly, operator: Exists}
+      containers:
+        - name: iperf
+          image: docker.io/nicolaka/netshoot:v0.16
+          command: ["iperf3", "-s"]
+          ports: [{containerPort: 5201}]
+          resources: {requests: {cpu: "1", memory: 512Mi}, limits: {cpu: "1", memory: 512Mi}}
