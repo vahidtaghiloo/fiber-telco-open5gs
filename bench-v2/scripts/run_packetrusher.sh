@@ -40,6 +40,8 @@ UDP_RATES=${UDP_RATES:-"50M 100M 200M"}
 SKIP_TCP=${SKIP_TCP:-0}
 PATHS=${PATHS:-pr}                      # dataplane: "pr" = bound to the UE address (tunnel -> UPF -> server); "pod" = same container, pod network only (no 5G)
 PING_COUNT=${PING_COUNT:-200}
+PR_CPU=${PR_CPU:-1250m}                 # CPU of the packetrusher container (E2b gives the generator more)
+TOOLS_CPU=${TOOLS_CPU:-250m}            # CPU of the tools container (the iperf3 client)
 TPL="$(cd "$(dirname "$0")" && pwd)/manifests/packetrusher.yaml"
 mkdir -p "$OUT"
 K="$KUBECTL -n $NS"
@@ -51,7 +53,7 @@ render() {   # $1 = N, $2 = "tunnel" or ""
   if [ "${2:-}" = tunnel ]; then tunnel_expr="s#@TUNNEL_LINE@#--tunnel#"; else tunnel_expr="/@TUNNEL_LINE@/d"; fi
   if [ "$NODESEL" = 1 ]; then nodesel_expr="s#@NODESEL@#nodeSelector: {telco.example/site: edge}#"; else nodesel_expr="/@NODESEL@/d"; fi
   sed -e "s#@NS@#$NS#g" -e "s#@IMAGE@#$IMAGE#g" -e "s#@BACKEND@#$BACKEND#g" -e "s#@N@#$1#g" -e "s#@TR@#$TR#g" \
-      -e "s#@AMF_IP@#$amf#g" -e "s#@NEA2@#$NEA2#g" -e "$tunnel_expr" -e "$nodesel_expr" "$TPL"
+      -e "s#@AMF_IP@#$amf#g" -e "s#@NEA2@#$NEA2#g" -e "s#@PR_CPU@#$PR_CPU#g" -e "s#@TOOLS_CPU@#$TOOLS_CPU#g" -e "$tunnel_expr" -e "$nodesel_expr" "$TPL"
 }
 
 state() {    # $1 = container, $2 = running|terminated  -> prints the state's JSON (empty if not in that state)
@@ -172,7 +174,7 @@ dataplane)
     for p in $PATHS; do
       if [ "$p" = pr ]; then bind='-B $UEIP'; pif='-I $UEIP'; else bind=''; pif=''; fi
       [ "$SKIP_TCP" = 1 ] || { echo "run iperf_${p}_tcp_P1.json \"$bind\" -P 1"; echo "run iperf_${p}_tcp_P4.json \"$bind\" -P 4"; }
-      echo "for b in $UDP_RATES; do run iperf_${p}_udp_b\$b.json \"$bind\" -u -b \$b; done"
+      if [ -n "$UDP_RATES" ]; then echo "for b in $UDP_RATES; do run iperf_${p}_udp_b\$b.json \"$bind\" -u -b \$b; done"; fi
       [ "$SKIP_TCP" = 1 ] || { echo "echo \"@@@ ping_${p}.txt\""; echo "ping -c $PING_COUNT -i 0.2 $pif \$SRV"; }
     done
   } > /tmp/suite_pr.sh
