@@ -36,7 +36,7 @@ RESET_AMF=${RESET_AMF:-1}              # 1 = restart the AMF first (drops leftov
 OUT=${OUT:?set OUT to the output directory}
 RUNS=${RUNS:-10}
 DURATION=${DURATION:-20}
-UDP_RATES=${UDP_RATES:-"50M 100M 200M"}
+UDP_RATES=${UDP_RATES-"50M 100M 200M"}   # "-" not ":-": an empty value (run_e2b.sh) means no UDP tests
 SKIP_TCP=${SKIP_TCP:-0}
 PATHS=${PATHS:-pr}                      # dataplane: "pr" = bound to the UE address (tunnel -> UPF -> server); "pod" = same container, pod network only (no 5G)
 PING_COUNT=${PING_COUNT:-200}
