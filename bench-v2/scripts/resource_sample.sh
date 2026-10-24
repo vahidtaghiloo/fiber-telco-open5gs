@@ -37,9 +37,12 @@ while [ $SECONDS -lt $end ]; do
   done
   if [ "$HOST_QEMU" = 1 ]; then
     for pid in $(pgrep -f qemu-system 2>/dev/null); do
-      guest=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null | grep -o 'guest=[^, ]*' | head -1 | cut -d= -f2)
+      args=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
+      guest=$(echo "$args" | grep -o 'guest=[^, ]*' | head -1 | cut -d= -f2)
+      smp=$(echo "$args" | grep -oE -- '-smp [^ ]+' | head -1 | awk '{ print $2 }' | grep -oE '^[0-9]+|cpus=[0-9]+' | head -1 | grep -oE '[0-9]+')
       ticks=$(sed 's/.*) //' /proc/$pid/stat 2>/dev/null | awk '{ print $12 + $13 }')
-      [ -n "$ticks" ] && echo "$ts,host,$(hostname),,${guest:-pid$pid},qemu_cpu_ticks,$ticks" >> "$F"
+      # several libvirt-metal VMs share the guest name (vbmh): the label carries vCPU count and pid (workload node: 32 vCPU)
+      [ -n "$ticks" ] && echo "$ts,host,$(hostname),,${guest:-qemu}_smp${smp:-NA}_pid$pid,qemu_cpu_ticks,$ticks" >> "$F"
     done
     awk -v ts="$ts" -v h="$(hostname)" '$1 == "cpu" { t = 0; for (i = 2; i <= 9; i++) t += $i; print ts ",host," h ",,,host_total_ticks," t; print ts ",host," h ",,,host_idle_ticks," ($5 + $6) }' /proc/stat >> "$F"
   fi
